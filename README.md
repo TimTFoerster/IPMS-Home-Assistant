@@ -3,6 +3,52 @@
 Diese Home-Assistant-Integration (**Projekt C**) bindet ISYGLT-Gebäudeautomationsanlagen direkt über die lokale HTTP-API des ISYGLT IPMS-Servers (Jetty, Standard-Port `8080`) an – **ohne Modbus TCP**. Sie ist vollständig wiederverwendbar, mehr-master-fähig und wird primär über ein deklaratives YAML/JSON-Anlagenmanifest (erzeugt durch **Projekt A**) konfiguriert.
 
 ---
+## Installation & Einrichtung
+
+### 1. Integration installieren
+* **Über HACS (empfohlen):**
+  1. Öffne in Home Assistant **HACS → Integrationen → Drei-Punkte-Menü (oben rechts) → Benutzerdefinierte Repositories**.
+  2. Füge die URL dieses GitHub-Repositories mit der Kategorie **Integration** hinzu und installiere **ISYGLT IPMS**.
+  3. Starte Home Assistant neu.
+* **Manuell:**
+  1. Kopiere den Ordner `custom_components/isyglt_ipms` in das Verzeichnis `config/custom_components/` deiner Home-Assistant-Installation.
+  2. Starte Home Assistant neu.
+
+### 2. Anlagen-Manifest ablegen
+1. Erstelle oder generiere die Manifest-Datei (z. B. `anlage.yaml` oder `anlage.json`) mit allen Räumen (`locations`) und Entitäten (`entities`).
+2. Lege die Datei im Home-Assistant-Konfigurationsverzeichnis ab, z. B. unter `/config/isyglt/anlage.yaml`.
+
+### 3. Integration in Home Assistant hinzufügen
+1. Gehe zu **Einstellungen → Geräte & Dienste → Integration hinzufügen** und suche nach **ISYGLT IPMS**.
+2. Gib folgende Daten ein:
+   * **IPMS-URL:** z. B. `http://192.168.178.71:8080/ipms`
+   * **Master-Alias:** z. B. `IPM1`
+   * **Pfad zur Manifest-Datei:** z. B. `/config/isyglt/anlage.yaml`
+3. Nach dem Speichern werden alle Bereiche (**Areas**) aus `locations` sowie sämtliche Entitäten automatisch angelegt.
+
+*(Hinweis: Bei mehreren IP-Mastern auf einem oder mehreren IPMS-Servern kannst du die Integration einfach mehrfach über **Integration hinzufügen** anlegen.)*
+
+---
+
+## Nutzung & Bedienung
+
+* **Änderungen am Manifest übernehmen:** Wenn du `anlage.yaml` angepasst oder neu generiert hast, klicke unter **Einstellungen → Geräte & Dienste → ISYGLT IPMS** auf das **Drei-Punkte-Menü → Neu laden**. Ein Neustart von Home Assistant ist nicht erforderlich.
+* **Lichter & Dimmer (`light`):**
+  * **Schaltlichter (`bit`):** Ein- und Ausschalten über Bit-Merker.
+  * **Dimmer (`dimmer`, `dimmer_tw`, `rgb`, `rgbw`):** Helligkeit (`0–255`) und Farben werden direkt als Byte-Wert geschrieben; beim Ausschalten (`0`) merkt sich Home Assistant die vorherige Helligkeit für das nächste Einschalten.
+  * **Gemeinsames Dimmen („Gesamt Heller/Dunkler“):** Fasse mehrere Dimmer über **Einstellungen → Geräte & Dienste → Helfer → Gruppe → Lichtgruppe** zusammen, um sie gemeinsam über einen Slider zu regeln.
+* **Rollladen, Markisen & Leinwände (`cover`):**
+  * **Auf / Ab / Stopp:** Sendet einen kurzen Tastimpuls (`pulse_ms`), die Selbsthaltung übernimmt das ISYGLT-Programm (`ROLLO`). Ein erneutes Drücken in dieselbe Richtung stoppt den Antrieb.
+  * **Lamellenverstellung (Jalousien):** Ist `tilt_step_ms` konfiguriert, stehen in Home Assistant zusätzliche Tilt-Buttons bereit, die einen Start- und nach `tilt_step_ms` einen Stopp-Impuls senden.
+* **Zentral-Aus & Taster-Impulse (`button`):** Löst beim Klick einen kurzen Tastimpuls (`pulse_ms`) auf den konfigurierten Merker aus.
+* **Szenen:** Verwende die nativen **Home Assistant Szenen** (*Einstellungen → Automationen & Szenen → Szenen*). Um Szenen über physische ISYGLT-Wandtaster auszulösen, binde den Taster-Merker als `binary_sensor` ein und starte die Szene per Automation.
+* **Einstellungsmerker (`number`) & Heizung (`climate`):** Nachlaufzeiten, Schwellwerte oder Raumregler-Sollwerte lassen sich direkt über Slider bzw. das Thermostat-Widget anpassen.
+* **Sperre, Störung & Verbindung (`enable_marker`, `fault_marker`, `NetworkError`):**
+  * Ist ein `enable_marker` auf `0` (gesperrt) oder ein `fault_marker` auf `1` (Störung), wird die betroffene Entität in Home Assistant automatisch als `nicht verfügbar` markiert und der Grund in den Entitäts-Attributen angezeigt.
+  * Der globale Diagnose-Sensor `binary_sensor.<master>_verbindung` meldet Verbindungs- oder Zyklusprobleme des IP-Masters.
+
+---
+
 
 ## 1. Architektur & Systemkontext
 
