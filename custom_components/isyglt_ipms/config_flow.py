@@ -37,7 +37,7 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
         )
     await async_load_manifest(hass, Path(hass.config.config_dir) / manifest_path)
     api = IsygltApiClient(hass, data[CONF_IPMS_URL])
-    await api.async_read_pool([])
+    await api.async_read_pool([(f"{data[CONF_MASTER_ALIAS]}:M0", "BYTE")])
 
 
 class IsygltConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

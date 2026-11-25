@@ -15,6 +15,7 @@ from custom_components.isyglt_ipms.binary_sensor import (
     IsygltMasterConnectivitySensor,
 )
 from custom_components.isyglt_ipms.const import DEFAULT_PULSE_MS
+from custom_components.isyglt_ipms.config_flow import _validate_input
 from custom_components.isyglt_ipms.cover import IsygltCover
 from custom_components.isyglt_ipms.button import IsygltButton
 from custom_components.isyglt_ipms.climate import IsygltClimate
@@ -154,6 +155,47 @@ def test_ajax_command_uses_required_query_and_form_body(
         assert session.calls[3][1]["data"]["CMD"] == "CLR_BIT_SWITCH"
 
     asyncio.run(run())
+
+
+def test_config_flow_connection_check_reads_dummy_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received_markers: list[tuple[str, str]] = []
+
+    class FakeApi:
+        def __init__(self, hass: Any, base_url: str) -> None:
+            pass
+
+        async def async_read_pool(
+            self, markers: list[tuple[str, str]]
+        ) -> dict[str, Any]:
+            received_markers.extend(markers)
+            return {}
+
+    async def load_manifest(hass: Any, path: Path) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(
+        "custom_components.isyglt_ipms.config_flow.async_load_manifest",
+        load_manifest,
+    )
+    monkeypatch.setattr(
+        "custom_components.isyglt_ipms.config_flow.IsygltApiClient", FakeApi
+    )
+
+    async def run() -> None:
+        hass = type("Hass", (), {"config": type("Config", (), {"config_dir": "/config"})()})()
+        await _validate_input(
+            hass,
+            {
+                "manifest_path": "anlage.yaml",
+                "ipms_url": "http://host/ipms",
+                "master_alias": "IPM2",
+            },
+        )
+
+    asyncio.run(run())
+    assert received_markers == [("IPM2:M0", "BYTE")]
 
 
 @pytest.mark.parametrize(
