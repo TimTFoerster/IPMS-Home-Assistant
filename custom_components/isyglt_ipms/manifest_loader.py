@@ -190,7 +190,7 @@ def _validate_manifest(manifest: Any) -> None:
                 f"Entity {entity['id']!r} references unknown location_id "
                 f"{location_id!r}"
             )
-        if entity.get("scale", 1) == 0 or entity.get("temperature_scale", 0.5) <= 0:
+        if entity.get("scale", 1) == 0 or entity.get("temperature_scale", 1.0) <= 0:
             raise ConfigEntryError(
                 f"Entity {entity['id']!r} scale must not be zero"
             )

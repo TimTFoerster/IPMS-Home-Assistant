@@ -146,7 +146,7 @@ Diese User Stories definieren die schrittweise Umsetzung der Home Assistant Cust
 
 **Akzeptanzkriterien:**
 
-* **`climate.py`:** Liest `current_temp_marker` und `target_temp_marker` (mit konfigurierbarem Skalierungsfaktor, Standard `0.5` oder `1.0` °C je nach PD-Konvention), schreibt Solltemperatur per `WRITE_BYTE` auf `target_temp_marker` und schaltet optional `comfort_marker` (`HVACMode.HEAT` / `AUTO` bzw. Preset Komfort/Normal).
+* **`climate.py`:** Liest `current_temp_marker` und `target_temp_marker` (konfigurierbarer `temperature_scale`, Standard `1.0` °C pro Byte-Schritt ohne Offset), schreibt Solltemperatur per `WRITE_BYTE` auf `target_temp_marker`, bildet `comfort_marker` als Komfort-/Normal-Preset und `valve_marker` als HVAC-Aktion ab.
 
 * **`sensor.py`:** Unterstützt `mode: "byte"` (`0..255`), `mode: "signed_byte"` (`-128..127`, Zweierkomplement für Außentemperatur), `mode: "word"` (`0..65535`, z. B. Luxwerte) und `mode: "signed_word"` (`-32768..32767`, 16-Bit-Zweierkomplement), jeweils als einzelner 16-Bit-Merker oder kombiniert aus `high_marker` + `low_marker`, inklusive `device_class`, `unit_of_measurement` und optionalem `scale` / `offset`.
 

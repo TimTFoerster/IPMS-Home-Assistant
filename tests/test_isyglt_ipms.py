@@ -513,6 +513,7 @@ def test_climate_scales_temperature_and_writes_setpoint() -> None:
                 "IPM1:M96": "40",
                 "IPM1:M92": "42",
                 "IPM1:NE1.1": "0",
+                "IPM1:NA1.5": "1",
             }
         )
         climate = _entity(
@@ -524,13 +525,34 @@ def test_climate_scales_temperature_and_writes_setpoint() -> None:
                 "current_temp_marker": "IPM1:M96",
                 "target_temp_marker": "IPM1:M92",
                 "comfort_marker": "IPM1:NE1.1",
+                "valve_marker": "IPM1:NA1.5",
                 "temperature_scale": 0.5,
             },
         )
         assert climate.current_temperature == 20
         assert climate.target_temperature == 21
-        assert climate.hvac_mode.value == "auto"
+        assert climate.hvac_mode.value == "heat"
+        assert climate.preset_mode == "none"
+        assert climate.hvac_action.value == "heating"
+        await climate.async_set_preset_mode("comfort")
+        assert coordinator.commands[-1] == ("bit", "IPM1:NE1.1", True)
         await climate.async_set_temperature(temperature=22.5)
         assert coordinator.commands[-1] == ("byte", "IPM1:M92", 45)
 
     asyncio.run(run())
+
+
+def test_climate_default_temperature_mapping_is_byte_plus_five() -> None:
+    coordinator = FakeCoordinator({"IPM1:M220": "25", "IPM1:M221": "30"})
+    climate = _entity(
+        IsygltClimate,
+        coordinator,
+        {
+            "id": "thermostat",
+            "name": "Thermostat",
+            "current_temp_marker": "IPM1:M220",
+            "target_temp_marker": "IPM1:M221",
+        },
+    )
+    assert climate.current_temperature == 25
+    assert climate.target_temperature == 30

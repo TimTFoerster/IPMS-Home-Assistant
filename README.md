@@ -236,6 +236,7 @@ entities:
     target_temp_marker: "IPM1:M92"
     comfort_marker: "IPM1:NE1.1"
     valve_marker: "IPM1:NA1.5"
+    temperature_scale: 1.0
 
   # 10. Sensor & Binärsensor
   - id: "aussen_temp"

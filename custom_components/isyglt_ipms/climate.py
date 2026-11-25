@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import HVACMode
+from homeassistant.components.climate.const import (
+    HVACAction,
+    HVACMode,
+    PRESET_COMFORT,
+    PRESET_NONE,
+    ClimateEntityFeature,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -34,18 +40,18 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
 
     def __init__(self, coordinator: Any, config: dict[str, Any], areas: dict[str, str]) -> None:
         super().__init__(coordinator, config, areas)
-        self._temperature_scale = float(config.get("temperature_scale", 0.5))
+        self._temperature_scale = float(config.get("temperature_scale", 1.0))
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
         self._attr_min_temp = float(config.get("min_temp", 5))
         self._attr_max_temp = float(config.get("max_temp", 35))
         self._attr_target_temperature_step = float(
             config.get("temperature_step", self._temperature_scale)
         )
-        self._attr_hvac_modes = (
-            [HVACMode.HEAT, HVACMode.AUTO]
-            if config.get("comfort_marker")
-            else [HVACMode.HEAT]
-        )
+        self._attr_hvac_modes = [HVACMode.HEAT]
+        self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
+        if config.get("comfort_marker"):
+            self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
+            self._attr_preset_modes = [PRESET_COMFORT, PRESET_NONE]
 
     @property
     def current_temperature(self) -> float | None:
@@ -60,12 +66,32 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
         return raw * self._temperature_scale if raw is not None else None
 
     @property
-    def hvac_mode(self) -> HVACMode:
-        """Return the state of the optional comfort bit."""
+    def hvac_action(self) -> HVACAction | None:
+        """Report whether the heating valve is active."""
+        marker = self.entity_config.get("valve_marker")
+        if marker is None:
+            return None
+        is_heating = self.coordinator.get_bit(marker)
+        if is_heating is None:
+            return None
+        return HVACAction.HEATING if is_heating else HVACAction.IDLE
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return the comfort preset state when a comfort marker is configured."""
         marker = self.entity_config.get("comfort_marker")
-        if marker is None or self.coordinator.get_bit(marker):
-            return HVACMode.HEAT
-        return HVACMode.AUTO
+        if marker is None:
+            return None
+        return (
+            PRESET_COMFORT
+            if self.coordinator.get_bit(marker)
+            else PRESET_NONE
+        )
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        """Return the supported heating mode; comfort is a separate preset."""
+        return HVACMode.HEAT
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Write a scaled target temperature."""
@@ -77,10 +103,10 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
             self.entity_config["target_temp_marker"], raw
         )
 
-    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Enable or disable comfort heating when the marker is configured."""
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Enable or disable comfort using the configured comfort marker."""
         marker = self.entity_config.get("comfort_marker")
         if marker is not None:
             await self.coordinator.async_write_bit(
-                marker, hvac_mode == HVACMode.HEAT
+                marker, preset_mode == PRESET_COMFORT
             )
