@@ -50,25 +50,32 @@ class IsygltApiClient:
                 headers={"Content-Type": "application/json"},
             ) as response:
                 response.raise_for_status()
-                payload = await response.json()
+                payload = await response.json(content_type=None)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             raise IsygltConnectionError(f"Unable to read IPMS pool: {err}") from err
 
-        if not isinstance(payload, dict) or not isinstance(
-            payload.get("dataItems"), list
-        ):
+        if not isinstance(payload, dict):
             raise IsygltConnectionError("IPMS returned an invalid jsonpooldata response")
         if payload.get("poolStatus") == "COMM_ERROR":
             raise IsygltConnectionError("IPMS returned COMM_ERROR while reading pool")
+        data_items = payload.get("responseDataSet")
+        if not isinstance(data_items, list):
+            data_items = payload.get("dataItems")
+        if not isinstance(data_items, list):
+            raise IsygltConnectionError("IPMS returned an invalid jsonpooldata response")
         if not isinstance(payload.get("masterCycleSet", {}), dict):
             raise IsygltConnectionError("IPMS returned an invalid masterCycleSet")
 
+        data: dict[str, Any] = {}
+        for item in data_items:
+            if not isinstance(item, dict):
+                continue
+            marker = item.get("masterMarker", item.get("m"))
+            if isinstance(marker, str):
+                data[marker] = item.get("value", item.get("v"))
+
         return {
-            "data": {
-                item["m"]: item.get("v")
-                for item in payload["dataItems"]
-                if isinstance(item, dict) and isinstance(item.get("m"), str)
-            },
+            "data": data,
             "poolStatus": payload.get("poolStatus"),
             "masterCycleSet": payload.get("masterCycleSet", {}),
         }

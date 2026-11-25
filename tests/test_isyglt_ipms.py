@@ -36,16 +36,19 @@ class FakeResponse:
     """Minimal async response fake for aiohttp calls."""
 
     headers = {"$PROXY_RESPONSE$": "OK"}
+    payload: dict[str, Any] = {
+        "poolStatus": "OK",
+        "dataItems": [{"m": "IPM1:NA64.1", "v": "1"}],
+        "masterCycleSet": {"IPM001": 123},
+    }
+    json_content_type: str | None = "not-called"
 
     def raise_for_status(self) -> None:
         """Match aiohttp response interface."""
 
-    async def json(self) -> dict[str, Any]:
-        return {
-            "poolStatus": "OK",
-            "dataItems": [{"m": "IPM1:NA64.1", "v": "1"}],
-            "masterCycleSet": {"IPM001": 123},
-        }
+    async def json(self, *, content_type: str | None = "application/json") -> dict[str, Any]:
+        self.json_content_type = content_type
+        return self.payload
 
     async def text(self) -> str:
         return ""
@@ -62,10 +65,11 @@ class FakeSession:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.response = FakeResponse()
 
     def post(self, url: str, **kwargs: Any) -> FakeResponse:
         self.calls.append((url, kwargs))
-        return FakeResponse()
+        return self.response
 
 
 class FakeCoordinator:
@@ -148,6 +152,45 @@ def test_ajax_command_uses_required_query_and_form_body(
         assert request["data"]["VALUE"] == "180"
         assert session.calls[2][1]["data"]["CMD"] == "SET_BIT_SWITCH"
         assert session.calls[3][1]["data"]["CMD"] == "CLR_BIT_SWITCH"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("field", "item"),
+    [
+        ("responseDataSet", {"masterMarker": "IPM1:M56", "value": "180"}),
+        ("dataItems", {"m": "IPM1:M56", "v": "180"}),
+        ("responseDataSet", {"m": "IPM1:M56", "v": "180"}),
+        ("dataItems", {"masterMarker": "IPM1:M56", "value": "180"}),
+    ],
+)
+def test_jsonpooldata_supports_current_and_legacy_response_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    item: dict[str, str],
+) -> None:
+    async def run() -> None:
+        session = FakeSession()
+        session.response.payload = {
+            "poolStatus": "OK",
+            field: [item],
+            "masterCycleSet": {"IPM001": 123},
+        }
+        monkeypatch.setattr(
+            "custom_components.isyglt_ipms.api.async_get_clientsession",
+            lambda hass: session,
+        )
+        client = IsygltApiClient(
+            object.__new__(HomeAssistant), "http://host/ipms"
+        )
+
+        result = await client.async_read_pool([("IPM1:M56", "BYTE")])
+
+        assert result["data"] == {"IPM1:M56": "180"}
+        assert result["poolStatus"] == "OK"
+        assert result["masterCycleSet"] == {"IPM001": 123}
+        assert session.response.json_content_type is None
 
     asyncio.run(run())
 
