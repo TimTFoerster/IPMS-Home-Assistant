@@ -49,8 +49,8 @@ Diese Home-Assistant-Integration (**Projekt C**) bindet ISYGLT-Gebäudeautomatio
 
 ---
 
-
-## 1. Architektur & Systemkontext
+<!-- ha-marketplace:exclude-start -->
+## Architektur & Systemkontext
 
 * **Projekt A (Generator / Parser):** Liest Exporte aus dem ISYGLT ProgrammDesigner (`_Adressen.txt`, `_Aktoren.txt`, `_Sensoren.txt` und Programm-TXT), vergibt freie Merker (`M`, `SM`, `NE`, `NA`) und erzeugt das Anlagenmanifest (`anlage.yaml` / `anlage.json`).
 * **Projekt B (Web-App):** Separates Web-Frontend für gewerbliche/öffentliche Bauten.
@@ -72,7 +72,7 @@ Diese Home-Assistant-Integration (**Projekt C**) bindet ISYGLT-Gebäudeautomatio
 
 ---
 
-## 2. IPMS HTTP-API Kurzreferenz
+## IPMS HTTP-API Kurzreferenz
 
 ### A. Zustände gebündelt auslesen: `POST /ipms/jsonpooldata`
 * **Header:** `Content-Type: application/json`
@@ -112,7 +112,8 @@ Diese Home-Assistant-Integration (**Projekt C**) bindet ISYGLT-Gebäudeautomatio
 
 ---
 
-## 3. Vollständiges Manifest-Beispiel (`anlage.yaml`)
+<!-- ha-marketplace:exclude-end -->
+## Vollständiges Manifest-Beispiel (`anlage.yaml`)
 
 ```yaml
 schema_version: 1
@@ -265,8 +266,8 @@ entities:
 ```
 
 ---
-
-## 4. Design-Leitlinien für die Implementierung
+<!-- ha-marketplace:exclude-start -->
+## Design-Leitlinien für die Implementierung
 
 1. **Kein langer Tastendruck / kein Hold:** Szenen werden über native Home-Assistant-Szenen gelöst, gemeinsames Heller/Dunkler über native HA-Lichtgruppen (`light` Group).
 2. **Reine Byte-Dimmer:** Dimmer benötigen im PD-Programm kein zusätzliches Rückmelde- oder Schaltbit. Ausschalten schreibt `0` (`WRITE_BYTE`), Einschalten ohne Helligkeitsangabe stellt den letzten gemerkten Wert > 0 (oder `default_brightness`) wieder her.
@@ -281,3 +282,4 @@ Ein vollständiges Beispielmanifest mit allen unterstützten Plattformen liegt u
 [examples/anlage.example.yaml](examples/anlage.example.yaml). Die Integrationstests
 können mit `pip install -r requirements-test.txt` und anschließend
 `python -m pytest -q` ausgeführt werden.
+<!-- ha-marketplace:exclude-end -->
