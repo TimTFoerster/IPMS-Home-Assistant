@@ -228,3 +228,10 @@ entities:
 4. **Einstellungsmerker (`number`):** Werte wie Nachlaufzeiten (`M101`, `SM...`) oder Schwellwerte werden über `number`-Entitäten lesbar und schreibbar (`WRITE_BYTE` / `WRITE_WORD`), unabhängig davon, ob die Logik auf dem IP-Master oder in Home Assistant läuft.
 5. **Enable- & Fault-Marker:** Werden intern ausgewertet (`enable_marker == 0` oder `fault_marker == 1` → Entität wird `unavailable` mit Diagnose-Attribut).
 6. **NetworkError:** Wird als globaler Diagnose-`binary_sensor` pro IP-Master abgebildet.
+
+## 5. Beispielmanifest & Tests
+
+Ein vollständiges Beispielmanifest mit allen unterstützten Plattformen liegt unter
+[examples/anlage.example.yaml](examples/anlage.example.yaml). Die Integrationstests
+können mit `pip install -r requirements-test.txt` und anschließend
+`python -m pytest -q` ausgeführt werden.

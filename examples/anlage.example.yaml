@@ -1,0 +1,146 @@
+schema_version: 1
+master:
+  alias: "IPM1"
+  ipms_url: "http://192.168.178.71:8080/ipms"
+  scan_interval: 1.0
+  pulse_ms: 150
+
+locations:
+  - id: "wohnhaus_og_bad"
+    name: "OG Bad"
+    building: "Wohnhaus"
+    floor: "OG"
+    room: "Bad"
+  - id: "wohnhaus_eg_wz"
+    name: "EG Wohnzimmer"
+    building: "Wohnhaus"
+    floor: "EG"
+    room: "Wohnzimmer"
+
+entities:
+  - id: "og_bad_sk4"
+    name: "Bad Schaltkreis 4"
+    platform: "light"
+    mode: "bit"
+    location_id: "wohnhaus_og_bad"
+    state_marker: "IPM1:NA64.1"
+    command_marker: "IPM1:NA64.1"
+
+  - id: "og_bad_spiegel"
+    name: "Bad Spiegel"
+    platform: "light"
+    mode: "dimmer"
+    location_id: "wohnhaus_og_bad"
+    brightness_marker: "IPM1:M56"
+    default_brightness: 255
+    enable_marker: "IPM1:NE64.1"
+    fault_marker: "IPM1:NE64.2"
+
+  - id: "eg_wz_tw"
+    name: "Wohnzimmer Decke TW"
+    platform: "light"
+    mode: "dimmer_tw"
+    location_id: "wohnhaus_eg_wz"
+    brightness_marker: "IPM1:M32"
+    color_temp_marker: "IPM1:M33"
+    min_kelvin: 2700
+    max_kelvin: 6500
+
+  - id: "eg_wz_rgbw"
+    name: "Wohnzimmer Voute RGBW"
+    platform: "light"
+    mode: "rgbw"
+    location_id: "wohnhaus_eg_wz"
+    red_marker: "IPM1:M34"
+    green_marker: "IPM1:M35"
+    blue_marker: "IPM1:M36"
+    white_marker: "IPM1:M37"
+
+  - id: "eg_wz_rgb"
+    name: "Wohnzimmer Akzentlicht RGB"
+    platform: "light"
+    mode: "rgb"
+    location_id: "wohnhaus_eg_wz"
+    red_marker: "IPM1:M38"
+    green_marker: "IPM1:M39"
+    blue_marker: "IPM1:M40"
+
+  - id: "og_bad_whirlpool"
+    name: "Steckdose Whirlpool"
+    platform: "switch"
+    device_class: "outlet"
+    location_id: "wohnhaus_og_bad"
+    state_marker: "IPM1:M49.2"
+    command_marker: "IPM1:M49.2"
+
+  - id: "eg_wz_leinwand"
+    name: "Leinwand"
+    platform: "cover"
+    device_class: "shade"
+    location_id: "wohnhaus_eg_wz"
+    up_marker: "IPM1:NE73.2"
+    down_marker: "IPM1:NE73.1"
+    moving_up_marker: "IPM1:NA73.2"
+    moving_down_marker: "IPM1:NA73.1"
+
+  - id: "eg_wz_raffstore"
+    name: "Raffstore Süd"
+    platform: "cover"
+    device_class: "blind"
+    location_id: "wohnhaus_eg_wz"
+    up_marker: "IPM1:NE74.1"
+    down_marker: "IPM1:NE74.2"
+    tilt_step_ms: 300
+
+  - id: "eg_zentral_aus"
+    name: "Zentral Aus Wohn/Ess"
+    platform: "button"
+    location_id: "wohnhaus_eg_wz"
+    command_marker: "IPM1:NE95.1"
+
+  - id: "og_bad_bwm_nachlauf"
+    name: "Nachlaufzeit BWM Bad"
+    platform: "number"
+    mode: "byte"
+    entity_category: "config"
+    location_id: "wohnhaus_og_bad"
+    marker: "IPM1:M101"
+    min_value: 1
+    max_value: 120
+    step: 1
+    unit_of_measurement: "min"
+
+  - id: "eg_wz_heizung"
+    name: "Heizung Wohnzimmer"
+    platform: "climate"
+    location_id: "wohnhaus_eg_wz"
+    current_temp_marker: "IPM1:M96"
+    target_temp_marker: "IPM1:M92"
+    comfort_marker: "IPM1:NE1.1"
+    valve_marker: "IPM1:NA1.5"
+
+  - id: "aussen_temp"
+    name: "Außentemperatur"
+    platform: "sensor"
+    mode: "signed_byte"
+    device_class: "temperature"
+    unit_of_measurement: "°C"
+    location_id: "wohnhaus_eg_wz"
+    state_marker: "IPM1:NE31"
+
+  - id: "aussen_lux"
+    name: "Helligkeit Nord"
+    platform: "sensor"
+    mode: "word"
+    device_class: "illuminance"
+    unit_of_measurement: "lx"
+    location_id: "wohnhaus_eg_wz"
+    high_marker: "IPM1:NE50"
+    low_marker: "IPM1:NE51"
+
+  - id: "eg_wz_bwm"
+    name: "Bewegungsmelder Wohnzimmer"
+    platform: "binary_sensor"
+    device_class: "motion"
+    location_id: "wohnhaus_eg_wz"
+    state_marker: "IPM1:M198.7"

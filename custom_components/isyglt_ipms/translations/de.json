@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ISYGLT IPMS einrichten",
+        "description": "Verbinde einen IPMS-Master und wähle das Anlagenmanifest.",
+        "data": {
+          "ipms_url": "IPMS-URL",
+          "master_alias": "Master-Alias",
+          "manifest_path": "Manifest-Pfad relativ zum Home-Assistant-Konfigurationsordner",
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "pulse_ms": "Impulsdauer (Millisekunden)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum IPMS-Server oder Manifest fehlgeschlagen.",
+      "invalid_manifest": "Das Anlagenmanifest ist ungültig oder kann nicht gelesen werden."
+    },
+    "abort": {
+      "already_configured": "Dieser IPMS-Master ist bereits eingerichtet."
+    }
+  }
+}
