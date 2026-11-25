@@ -411,6 +411,21 @@ def test_cover_stop_repeats_last_direction_impulse() -> None:
     asyncio.run(run())
 
 
+def test_cover_without_position_reports_unknown_closed_state() -> None:
+    cover = _entity(
+        IsygltCover,
+        FakeCoordinator(),
+        {
+            "id": "cover",
+            "name": "Shade",
+            "up_marker": "IPM1:NE1.1",
+            "down_marker": "IPM1:NE1.2",
+        },
+    )
+    assert cover.is_closed is None
+    assert cover.state is None
+
+
 def test_cover_tilt_sends_two_impulses() -> None:
     async def run() -> None:
         coordinator = FakeCoordinator()

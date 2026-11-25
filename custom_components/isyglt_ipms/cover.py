@@ -41,6 +41,7 @@ class IsygltCover(IsygltEntity, CoverEntity):
         self._attr_device_class = (
             CoverDeviceClass(device_class) if device_class is not None else None
         )
+        self._attr_is_closed = None
         features = CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
         if config.get("tilt_step_ms") is not None:
             features |= CoverEntityFeature.OPEN_TILT | CoverEntityFeature.CLOSE_TILT
