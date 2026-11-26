@@ -891,6 +891,30 @@ def test_tunable_white_uses_optimistic_brightness_and_color_temperature() -> Non
     asyncio.run(run())
 
 
+def test_tunable_white_turn_on_restores_last_brightness_when_off() -> None:
+    coordinator = FakeCoordinator({"IPM1:M32": "123", "IPM1:M33": "80"})
+    light = _entity(
+        IsygltLight,
+        coordinator,
+        {
+            "id": "tw",
+            "name": "Tunable white",
+            "mode": "dimmer_tw",
+            "brightness_marker": "IPM1:M32",
+            "color_temp_marker": "IPM1:M33",
+        },
+    )
+
+    assert light.brightness == 123
+    assert light._last_brightness == 123
+    coordinator.data["IPM1:M32"] = "0"
+
+    asyncio.run(light.async_turn_on())
+
+    assert coordinator.commands == [("byte", "IPM1:M32", 123)]
+    assert light.is_on is True
+
+
 @pytest.mark.parametrize(
     ("mode", "color_key", "color", "fields"),
     [
@@ -936,6 +960,45 @@ def test_rgb_and_rgbw_use_optimistic_color_marker_values(
     asyncio.run(run())
 
 
+def test_rgb_turn_on_restores_last_nonzero_color_after_off_poll() -> None:
+    async def run() -> None:
+        coordinator = FakeCoordinator(
+            {
+                "IPM1:M40": "12",
+                "IPM1:M41": "34",
+                "IPM1:M42": "56",
+            }
+        )
+        light = _entity(
+            IsygltLight,
+            coordinator,
+            {
+                "id": "rgb",
+                "name": "RGB",
+                "mode": "rgb",
+                "red_marker": "IPM1:M40",
+                "green_marker": "IPM1:M41",
+                "blue_marker": "IPM1:M42",
+            },
+        )
+        assert light.brightness == 56
+        assert light._last_rgb == (12, 34, 56)
+
+        coordinator.data.update(
+            {"IPM1:M40": "0", "IPM1:M41": "0", "IPM1:M42": "0"}
+        )
+        await light.async_turn_on()
+
+        assert coordinator.commands == [
+            ("byte", "IPM1:M40", 12),
+            ("byte", "IPM1:M41", 34),
+            ("byte", "IPM1:M42", 56),
+        ]
+        assert light.rgb_color == (12, 34, 56)
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     ("config", "marker_values", "reason"),
     [
@@ -959,6 +1022,23 @@ def test_enable_and_fault_markers_make_entity_unavailable(
     )
     assert entity.available is False
     assert entity.extra_state_attributes == {"lock_reason": reason}
+
+
+def test_master_offline_makes_regular_entities_unavailable() -> None:
+    coordinator = FakeCoordinator({"IPM1:M1.1": "1"})
+    coordinator.master_online = False
+    entity = _entity(
+        IsygltBinarySensor,
+        coordinator,
+        {
+            "id": "binary",
+            "name": "Binary",
+            "state_marker": "IPM1:M1.1",
+        },
+    )
+
+    assert entity.available is False
+    assert entity.extra_state_attributes == {"lock_reason": "master_offline"}
 
 
 def test_master_connectivity_sensor_reports_cycle_watchdog() -> None:
@@ -1360,6 +1440,37 @@ def test_climate_decodes_negative_signed_current_temperature() -> None:
     )
     assert climate.current_temperature == -5
     assert climate.target_temperature == 30
+
+
+def test_climate_decodes_signed_target_temperature_when_minimum_is_negative() -> None:
+    climate = _entity(
+        IsygltClimate,
+        FakeCoordinator({"IPM1:M220": "20", "IPM1:M221": "251"}),
+        {
+            "id": "thermostat",
+            "name": "Thermostat",
+            "current_temp_marker": "IPM1:M220",
+            "target_temp_marker": "IPM1:M221",
+            "min_temp": -20,
+            "temperature_scale": 1.0,
+        },
+    )
+    assert climate.target_temperature == -5
+
+
+def test_climate_preset_mode_is_unknown_when_marker_value_is_missing() -> None:
+    climate = _entity(
+        IsygltClimate,
+        FakeCoordinator(),
+        {
+            "id": "thermostat",
+            "name": "Thermostat",
+            "current_temp_marker": "IPM1:M220",
+            "target_temp_marker": "IPM1:M221",
+            "comfort_marker": "IPM1:NE1.1",
+        },
+    )
+    assert climate.preset_mode is None
 
 
 def test_coordinator_serializes_pulses_for_same_marker() -> None:

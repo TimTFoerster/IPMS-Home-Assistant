@@ -61,13 +61,12 @@ class IsygltLight(IsygltEntity, LightEntity):
         """Return brightness from the configured byte marker."""
         if self._mode == "bit":
             return None
-        if self._mode in ("rgb", "rgbw") and not self.entity_config.get(
-            "brightness_marker"
-        ):
+        if self._mode in ("rgb", "rgbw"):
             color = self._read_color()
-            return max(color) if color is not None else None
+            if not self.entity_config.get("brightness_marker"):
+                return max(color) if color is not None else None
         value = self.coordinator.get_byte(self.entity_config["brightness_marker"])
-        if self._mode == "dimmer" and value is not None and value > 0:
+        if self._mode in ("dimmer", "dimmer_tw") and value is not None and value > 0:
             self._last_brightness = value
         return value
 
@@ -172,6 +171,8 @@ class IsygltLight(IsygltEntity, LightEntity):
 
     async def _turn_on_tunable_white(self, kwargs: dict[str, Any]) -> None:
         brightness = kwargs.get(ATTR_BRIGHTNESS)
+        if brightness is None and not self.is_on:
+            brightness = self._last_brightness
         if brightness is not None:
             await self.coordinator.async_write_byte(
                 self.entity_config["brightness_marker"],
@@ -194,7 +195,11 @@ class IsygltLight(IsygltEntity, LightEntity):
         color = kwargs.get(color_key)
         if color is None:
             current_color = self._read_color()
-            color = current_color or self._last_rgb[: len(self._color_fields())]
+            color = (
+                current_color
+                if current_color and any(current_color)
+                else self._last_rgb[: len(self._color_fields())]
+            )
         color = tuple(int(value) for value in color)
         fields = self._color_fields()
         self._last_rgb = color
@@ -228,4 +233,7 @@ class IsygltLight(IsygltEntity, LightEntity):
         ]
         if any(value is None for value in values):
             return None
-        return tuple(value for value in values if value is not None)
+        color = tuple(value for value in values if value is not None)
+        if any(color):
+            self._last_rgb = color
+        return color

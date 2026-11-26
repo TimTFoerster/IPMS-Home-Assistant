@@ -68,6 +68,8 @@ class IsygltEntity(CoordinatorEntity[IsygltDataUpdateCoordinator]):
     def _lock_reason(self) -> str | None:
         if not self.coordinator.last_update_success:
             return "offline"
+        if not self.coordinator.master_online:
+            return "master_offline"
         enable_marker = self.entity_config.get("enable_marker")
         if enable_marker and self.coordinator.get_bit(enable_marker) is False:
             return "disabled"

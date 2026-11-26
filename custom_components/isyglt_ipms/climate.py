@@ -65,6 +65,8 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
     def target_temperature(self) -> float | None:
         """Return the scaled target temperature."""
         raw = self.coordinator.get_byte(self.entity_config["target_temp_marker"])
+        if self._attr_min_temp < 0:
+            raw = decode_numeric(raw, "signed_byte")
         return raw * self._temperature_scale if raw is not None else None
 
     @property
@@ -84,11 +86,10 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
         marker = self.entity_config.get("comfort_marker")
         if marker is None:
             return None
-        return (
-            PRESET_COMFORT
-            if self.coordinator.get_bit(marker)
-            else PRESET_ECO
-        )
+        comfort = self.coordinator.get_bit(marker)
+        if comfort is None:
+            return None
+        return PRESET_COMFORT if comfort else PRESET_ECO
 
     @property
     def hvac_mode(self) -> HVACMode:
