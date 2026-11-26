@@ -163,7 +163,7 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 self._unchanged_cycles = 0
             self._last_cycle = cycle
-            self.master_online = self._unchanged_cycles < 2
+            self.master_online = self._unchanged_cycles < 4
         return result.get("data", {})
 
     def get_bit(self, marker: str) -> bool | None:
@@ -320,5 +320,14 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         duration = self.master.get("pulse_ms", DEFAULT_PULSE_MS)
         if pulse_ms is not None:
             duration = pulse_ms
-        await self.api.async_pulse_bit(marker, duration)
+        lock = self._marker_command_locks.setdefault(marker, asyncio.Lock())
+        async with lock:
+            await self.api.async_pulse_bit(marker, duration)
         await self.async_request_refresh()
+
+    async def async_shutdown(self) -> None:
+        """Cancel optimistic state timers and shut down the coordinator."""
+        for handle in self._optimistic_expiry_handles.values():
+            handle.cancel()
+        self._optimistic_expiry_handles.clear()
+        await super().async_shutdown()

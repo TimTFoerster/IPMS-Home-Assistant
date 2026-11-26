@@ -21,6 +21,7 @@ from homeassistant.components.light import (
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, HomeAssistantError
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 import custom_components.isyglt_ipms as integration
 from custom_components.isyglt_ipms import _default_area_icon, _default_floor_icon
@@ -191,12 +192,15 @@ def _optimistic_coordinator(api: Any, *, hold_seconds: float = 1.0) -> Any:
     """Create a coordinator instance with the state needed for write-path tests."""
     coordinator = object.__new__(IsygltDataUpdateCoordinator)
     coordinator.api = api
+    coordinator.markers = []
     coordinator.data = {"IPM1:M1": "0", "IPM1:M2": "0"}
     coordinator._marker_command_locks = {}
     coordinator._optimistic_states = {}
     coordinator._optimistic_generations = {}
     coordinator._optimistic_expiry_handles = {}
     coordinator._optimistic_hold_seconds = hold_seconds
+    coordinator.master = {"pulse_ms": DEFAULT_PULSE_MS}
+    coordinator._refresh_lock = asyncio.Lock()
     coordinator.async_update_listeners = lambda: None
 
     async def request_refresh() -> None:
@@ -227,8 +231,10 @@ def test_ajax_command_uses_required_query_and_form_body(
         assert read_request["json"]["reqDataSet"] == [
             {"masterMarker": "IPM1:NA64.1", "valueType": "BIT", "length": 1}
         ]
+        assert read_request["timeout"] == aiohttp.ClientTimeout(total=5.0)
         url, request = session.calls[1]
         assert url == "http://host/ipms/ajaxcmdproxy"
+        assert request["timeout"] == aiohttp.ClientTimeout(total=5.0)
         assert request["params"] == {"$MCRQC$": "1"}
         assert request["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
         assert request["data"]["CMD"] == "WRITE_BYTE"
@@ -741,6 +747,57 @@ def test_coordinator_collects_markers_deduplicated_in_one_batch() -> None:
     }
 
 
+def test_coordinator_polls_only_configured_cover_motion_markers() -> None:
+    assert IsygltDataUpdateCoordinator._collect_markers(
+        [
+            {
+                "platform": "cover",
+                "up_marker": "IPM1:NE1.1",
+                "down_marker": "IPM1:NE1.2",
+            }
+        ]
+    ) == []
+    assert dict(
+        IsygltDataUpdateCoordinator._collect_markers(
+            [
+                {
+                    "platform": "cover",
+                    "up_marker": "IPM1:NE1.1",
+                    "down_marker": "IPM1:NE1.2",
+                    "moving_up_marker": "IPM1:NA1.1",
+                }
+            ]
+        )
+    ) == {"IPM1:NA1.1": "BIT"}
+
+
+def test_coordinator_keeps_master_online_for_four_unchanged_cycles() -> None:
+    class Api:
+        async def async_read_pool(
+            self, markers: list[tuple[str, str]]
+        ) -> dict[str, Any]:
+            return {
+                "masterCycleSet": {"IPM001": 123},
+                "poolStatus": "OK",
+                "data": {},
+            }
+
+    async def run() -> None:
+        coordinator = _optimistic_coordinator(Api())
+        coordinator._cycle_key = "IPM001"
+        coordinator._last_cycle = None
+        coordinator._unchanged_cycles = 0
+
+        statuses = []
+        for _ in range(5):
+            await coordinator._async_update_data()
+            statuses.append(coordinator.master_online)
+
+        assert statuses == [True, True, True, True, False]
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     ("raw", "mode", "expected"),
     [
@@ -760,6 +817,20 @@ def test_numeric_decode_signed_and_word_values(
 def test_signed_numeric_write_uses_twos_complement() -> None:
     assert encode_numeric(-1, "signed_byte", 1, 0) == 255
     assert encode_numeric(-1, "signed_word", 1, 0) == 65535
+
+
+def test_sensor_decodes_unsigned_pool_byte_as_signed_byte() -> None:
+    sensor = _entity(
+        IsygltSensor,
+        FakeCoordinator({"IPM1:M1": "251"}),
+        {
+            "id": "outside_temperature",
+            "name": "Outside temperature",
+            "mode": "signed_byte",
+            "state_marker": "IPM1:M1",
+        },
+    )
+    assert sensor.native_value == -5
 
 
 def test_dimmer_remembers_brightness_when_turned_off() -> None:
@@ -1274,3 +1345,75 @@ def test_climate_default_temperature_mapping_is_byte_plus_five() -> None:
     )
     assert climate.current_temperature == 25
     assert climate.target_temperature == 30
+
+
+def test_climate_decodes_negative_signed_current_temperature() -> None:
+    climate = _entity(
+        IsygltClimate,
+        FakeCoordinator({"IPM1:M220": "251", "IPM1:M221": "30"}),
+        {
+            "id": "thermostat",
+            "name": "Thermostat",
+            "current_temp_marker": "IPM1:M220",
+            "target_temp_marker": "IPM1:M221",
+        },
+    )
+    assert climate.current_temperature == -5
+    assert climate.target_temperature == 30
+
+
+def test_coordinator_serializes_pulses_for_same_marker() -> None:
+    class Api:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.events: list[str] = []
+
+        async def async_pulse_bit(self, marker: str, pulse_ms: int) -> None:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.events.append("start")
+            await asyncio.sleep(0.01)
+            self.events.append("end")
+            self.active -= 1
+
+    async def run() -> None:
+        api = Api()
+        coordinator = _optimistic_coordinator(api)
+        await asyncio.gather(
+            coordinator.async_pulse("IPM1:NE1.1", 10),
+            coordinator.async_pulse("IPM1:NE1.1", 10),
+        )
+        assert api.max_active == 1
+        assert api.events == ["start", "end", "start", "end"]
+
+    asyncio.run(run())
+
+
+def test_coordinator_shutdown_cancels_optimistic_timer_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shutdown_called = False
+
+    async def base_shutdown(_coordinator: DataUpdateCoordinator[Any]) -> None:
+        nonlocal shutdown_called
+        shutdown_called = True
+
+    monkeypatch.setattr(DataUpdateCoordinator, "async_shutdown", base_shutdown)
+
+    async def run() -> None:
+        coordinator = _optimistic_coordinator(object())
+        loop = asyncio.get_running_loop()
+        handles = {
+            "IPM1:M1": loop.call_later(60, lambda: None),
+            "IPM1:M2": loop.call_later(60, lambda: None),
+        }
+        coordinator._optimistic_expiry_handles = handles
+
+        await coordinator.async_shutdown()
+
+        assert all(handle.cancelled() for handle in handles.values())
+        assert coordinator._optimistic_expiry_handles == {}
+
+    asyncio.run(run())
+    assert shutdown_called

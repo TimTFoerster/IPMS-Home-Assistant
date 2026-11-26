@@ -19,6 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .entity import IsygltEntity
+from .numeric import decode_numeric
 
 
 async def async_setup_entry(
@@ -55,9 +56,10 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
 
     @property
     def current_temperature(self) -> float | None:
-        """Return the scaled measured room temperature."""
+        """Return the scaled measured room temperature as a signed byte."""
         raw = self.coordinator.get_byte(self.entity_config["current_temp_marker"])
-        return raw * self._temperature_scale if raw is not None else None
+        decoded = decode_numeric(raw, "signed_byte")
+        return decoded * self._temperature_scale if decoded is not None else None
 
     @property
     def target_temperature(self) -> float | None:

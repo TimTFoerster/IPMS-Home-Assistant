@@ -64,6 +64,7 @@ class IsygltApiClient:
                 f"{self._base_url}/jsonpooldata",
                 json={"reqDataSet": request_data},
                 headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=5.0),
             ) as response:
                 response.raise_for_status()
                 payload = await response.json(content_type=None)
@@ -111,6 +112,7 @@ class IsygltApiClient:
                     "VALUE": str(value),
                 },
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=aiohttp.ClientTimeout(total=5.0),
             ) as response:
                 response.raise_for_status()
                 proxy_response = response.headers.get("$PROXY_RESPONSE$")
