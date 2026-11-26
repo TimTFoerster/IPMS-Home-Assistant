@@ -49,7 +49,8 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cycle_key = self._master_cycle_key(master.get("alias", ""))
         self._refresh_lock = asyncio.Lock()
         self._marker_command_locks: dict[str, asyncio.Lock] = {}
-        self._optimistic_states: dict[str, tuple[int, float]] = {}
+        self._optimistic_states: dict[str, tuple[int, float | None, int]] = {}
+        self._optimistic_generations: dict[str, int] = {}
         self._optimistic_expiry_handles: dict[str, asyncio.TimerHandle] = {}
         self._optimistic_hold_seconds = max(
             float(master.get("scan_interval", DEFAULT_SCAN_INTERVAL)) * 2, 1.0
@@ -193,15 +194,32 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _get_marker_value(self, marker: str) -> Any:
         """Return the active optimistic value before falling back to pool data."""
         optimistic = self._optimistic_states.get(marker)
-        if optimistic is not None and asyncio.get_running_loop().time() < optimistic[1]:
+        if optimistic is not None and (
+            optimistic[1] is None
+            or asyncio.get_running_loop().time() < optimistic[1]
+        ):
             return optimistic[0]
         return self.data.get(marker) if self.data else None
 
-    def _set_optimistic_state(self, marker: str, value: int) -> None:
-        """Hold a successfully commanded value over stale pool responses."""
+    def _set_optimistic_state(self, marker: str, value: int) -> int:
+        """Publish a pending command immediately and return its generation."""
+        generation = self._optimistic_generations.get(marker, 0) + 1
+        self._optimistic_generations[marker] = generation
+        self._optimistic_states[marker] = (value, None, generation)
+        old_handle = self._optimistic_expiry_handles.pop(marker, None)
+        if old_handle is not None:
+            old_handle.cancel()
+        self.async_update_listeners()
+        return generation
+
+    def _start_optimistic_hold(self, marker: str, generation: int) -> None:
+        """Hold a successfully sent value over stale pool responses."""
+        optimistic = self._optimistic_states.get(marker)
+        if optimistic is None or optimistic[2] != generation:
+            return
         loop = asyncio.get_running_loop()
         expires_at = loop.time() + self._optimistic_hold_seconds
-        self._optimistic_states[marker] = (value, expires_at)
+        self._optimistic_states[marker] = (optimistic[0], expires_at, generation)
         old_handle = self._optimistic_expiry_handles.pop(marker, None)
         if old_handle is not None:
             old_handle.cancel()
@@ -209,14 +227,24 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._optimistic_hold_seconds,
             self._expire_optimistic_state,
             marker,
-            expires_at,
+            generation,
         )
+
+    def _clear_optimistic_state(self, marker: str, generation: int) -> None:
+        """Clear a failed command without removing a newer command's state."""
+        optimistic = self._optimistic_states.get(marker)
+        if optimistic is None or optimistic[2] != generation:
+            return
+        self._optimistic_states.pop(marker, None)
+        handle = self._optimistic_expiry_handles.pop(marker, None)
+        if handle is not None:
+            handle.cancel()
         self.async_update_listeners()
 
-    def _expire_optimistic_state(self, marker: str, expires_at: float) -> None:
+    def _expire_optimistic_state(self, marker: str, generation: int) -> None:
         """Drop a held value and publish the latest polled state."""
         optimistic = self._optimistic_states.get(marker)
-        if optimistic is None or optimistic[1] != expires_at:
+        if optimistic is None or optimistic[2] != generation:
             return
         self._optimistic_states.pop(marker, None)
         self._optimistic_expiry_handles.pop(marker, None)
@@ -231,19 +259,20 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         optimistic_marker: str | None = None,
         optimistic_value: int | None = None,
     ) -> None:
-        """Serialize writes per marker and publish only successful commands."""
+        """Publish immediately, serialize writes, and hold successful values."""
+        state_marker = optimistic_marker or marker
+        state_value = value if optimistic_value is None else optimistic_value
+        generation = self._set_optimistic_state(state_marker, state_value)
         lock = self._marker_command_locks.setdefault(marker, asyncio.Lock())
         async with lock:
             try:
                 await self.api.async_send_command(cmd, marker, value)
             except IsygltApiError as err:
+                self._clear_optimistic_state(state_marker, generation)
                 raise HomeAssistantError(
                     f"Unable to write IPMS marker {marker}: {err}"
                 ) from err
-            self._set_optimistic_state(
-                optimistic_marker or marker,
-                value if optimistic_value is None else optimistic_value,
-            )
+            self._start_optimistic_hold(state_marker, generation)
         await self.async_request_refresh()
 
     async def async_write_bit(

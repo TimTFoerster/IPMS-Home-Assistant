@@ -158,6 +158,7 @@ def _optimistic_coordinator(api: Any, *, hold_seconds: float = 1.0) -> Any:
     coordinator.data = {"IPM1:M1": "0", "IPM1:M2": "0"}
     coordinator._marker_command_locks = {}
     coordinator._optimistic_states = {}
+    coordinator._optimistic_generations = {}
     coordinator._optimistic_expiry_handles = {}
     coordinator._optimistic_hold_seconds = hold_seconds
     coordinator.async_update_listeners = lambda: None
@@ -600,6 +601,92 @@ def test_optimistic_state_is_visible_before_refresh_completes() -> None:
         await refresh_started.wait()
         assert coordinator.get_bit("IPM1:M1") is True
         release_refresh.set()
+        await write
+
+    asyncio.run(run())
+
+
+def test_optimistic_state_is_visible_while_http_command_is_pending() -> None:
+    async def run() -> None:
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
+
+        class Api:
+            async def async_send_command(
+                self, cmd: str, marker: str, value: int
+            ) -> None:
+                send_started.set()
+                await release_send.wait()
+
+        coordinator = _optimistic_coordinator(Api())
+        write = asyncio.create_task(
+            coordinator.async_write_bit("IPM1:M1", True)
+        )
+        await send_started.wait()
+
+        assert coordinator.get_bit("IPM1:M1") is True
+        assert coordinator._optimistic_states["IPM1:M1"][1] is None
+
+        release_send.set()
+        await write
+        assert coordinator._optimistic_states["IPM1:M1"][1] is not None
+
+    asyncio.run(run())
+
+
+def test_failed_pending_send_clears_immediate_optimistic_state() -> None:
+    async def run() -> None:
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
+
+        class Api:
+            async def async_send_command(
+                self, cmd: str, marker: str, value: int
+            ) -> None:
+                send_started.set()
+                await release_send.wait()
+                raise IsygltCommandError("connection refused")
+
+        coordinator = _optimistic_coordinator(Api())
+        write = asyncio.create_task(
+            coordinator.async_write_bit("IPM1:M1", True)
+        )
+        await send_started.wait()
+        assert coordinator.get_bit("IPM1:M1") is True
+
+        release_send.set()
+        with pytest.raises(HomeAssistantError):
+            await write
+
+        assert coordinator.get_bit("IPM1:M1") is False
+        assert "IPM1:M1" not in coordinator._optimistic_states
+
+    asyncio.run(run())
+
+
+def test_byte_optimistic_state_overrides_stale_pool_during_pending_send() -> None:
+    async def run() -> None:
+        send_started = asyncio.Event()
+        release_send = asyncio.Event()
+
+        class Api:
+            async def async_send_command(
+                self, cmd: str, marker: str, value: int
+            ) -> None:
+                send_started.set()
+                await release_send.wait()
+
+        coordinator = _optimistic_coordinator(Api())
+        coordinator.data["IPM1:M1"] = "25"
+        write = asyncio.create_task(
+            coordinator.async_write_byte("IPM1:M1", 220)
+        )
+        await send_started.wait()
+
+        assert coordinator.data["IPM1:M1"] == "25"
+        assert coordinator.get_byte("IPM1:M1") == 220
+
+        release_send.set()
         await write
 
     asyncio.run(run())
