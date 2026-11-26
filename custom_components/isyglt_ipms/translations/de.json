@@ -3,22 +3,62 @@
     "step": {
       "user": {
         "title": "ISYGLT IPMS einrichten",
-        "description": "Verbinde einen IPMS-Master und wähle das Anlagenmanifest.",
+        "description": "Die Verbindungsfelder sind getrennt editierbar. Der Manifestpfad ist relativ zum Home-Assistant-Konfigurationsordner oder absolut innerhalb dieses Ordners.",
         "data": {
-          "ipms_url": "IPMS-URL",
+          "ipms_scheme": "Protokoll (http:// oder https://)",
+          "ipms_host": "IP-Adresse oder Hostname",
+          "ipms_port": "Port",
+          "ipms_api_path": "IPMS-API-Pfad",
           "master_alias": "Master-Alias",
-          "manifest_path": "Manifest-Pfad relativ zum Home-Assistant-Konfigurationsordner",
+          "manifest_path": "Manifest-Pfad (z. B. isyglt/ipm1.yaml)",
           "scan_interval": "Abfrageintervall (Sekunden)",
           "pulse_ms": "Impulsdauer (Millisekunden)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Verbindung zum IPMS-Server oder Manifest fehlgeschlagen.",
-      "invalid_manifest": "Das Anlagenmanifest ist ungültig oder kann nicht gelesen werden."
+      "cannot_connect": "Verbindung zum IPMS-Server fehlgeschlagen. Prüfe IP-Adresse, Port, Netzwerk und ob der IPMS-Dienst läuft.",
+      "cannot_resolve_host": "Der Hostname konnte nicht aufgelöst werden. Prüfe die IP-Adresse oder den Hostnamen.",
+      "connection_refused": "Die Verbindung wurde von IP-Adresse/Port abgelehnt. Prüfe den Port und ob der IPMS-Dienst dort läuft.",
+      "host_unreachable": "Der Host ist vom Home-Assistant-Server aus nicht erreichbar. Prüfe IP-Adresse, Netzwerk und Gateway.",
+      "connection_timeout": "Zeitüberschreitung beim Verbindungsversuch. Prüfe IP-Adresse, Port, Netzwerk und IPMS-Dienst.",
+      "invalid_ipms_response": "Der IPMS-Server wurde erreicht, hat aber eine ungültige Antwort geliefert.",
+      "invalid_connection_settings": "Verbindungsdaten ungültig. Protokoll muss http:// oder https:// sein; Host, Port und API-Pfad prüfen.",
+      "manifest_not_found": "Manifestdatei nicht gefunden. Prüfe Pfad und Dateinamen im Home-Assistant-Konfigurationsordner.",
+      "invalid_manifest": "Manifestdatei ist vorhanden, aber fehlerhaft oder enthält nicht passende Master-/Marker-Daten."
     },
     "abort": {
       "already_configured": "Dieser IPMS-Master ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ISYGLT IPMS konfigurieren",
+        "description": "Verbindung, Master und Manifestpfad bearbeiten. Änderungen werden nach dem Speichern neu geladen.",
+        "data": {
+          "ipms_scheme": "Protokoll (http:// oder https://)",
+          "ipms_host": "IP-Adresse oder Hostname",
+          "ipms_port": "Port",
+          "ipms_api_path": "IPMS-API-Pfad",
+          "master_alias": "Master-Alias",
+          "manifest_path": "Manifest-Pfad (z. B. isyglt/ipm1.yaml)",
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "pulse_ms": "Impulsdauer (Millisekunden)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum IPMS-Server fehlgeschlagen. Prüfe IP-Adresse, Port, Netzwerk und ob der IPMS-Dienst läuft.",
+      "cannot_resolve_host": "Der Hostname konnte nicht aufgelöst werden. Prüfe die IP-Adresse oder den Hostnamen.",
+      "connection_refused": "Die Verbindung wurde von IP-Adresse/Port abgelehnt. Prüfe den Port und ob der IPMS-Dienst dort läuft.",
+      "host_unreachable": "Der Host ist vom Home-Assistant-Server aus nicht erreichbar. Prüfe IP-Adresse, Netzwerk und Gateway.",
+      "connection_timeout": "Zeitüberschreitung beim Verbindungsversuch. Prüfe IP-Adresse, Port, Netzwerk und IPMS-Dienst.",
+      "invalid_ipms_response": "Der IPMS-Server wurde erreicht, hat aber eine ungültige Antwort geliefert.",
+      "invalid_connection_settings": "Verbindungsdaten ungültig. Protokoll muss http:// oder https:// sein; Host, Port und API-Pfad prüfen.",
+      "manifest_not_found": "Manifestdatei nicht gefunden. Prüfe Pfad und Dateinamen im Home-Assistant-Konfigurationsordner.",
+      "invalid_manifest": "Manifestdatei ist vorhanden, aber fehlerhaft oder enthält nicht passende Master-/Marker-Daten.",
+      "already_configured": "Dieser IP-Master ist mit diesen Verbindungsdaten bereits eingerichtet."
     }
   }
 }

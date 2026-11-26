@@ -62,11 +62,13 @@ Diese User Stories definieren die schrittweise Umsetzung der Home Assistant Cust
 
 **Akzeptanzkriterien:**
 
-* Config Flow fragt `ipms_url` (z. B. `http://192.168.178.71:8080/ipms`), `master_alias` (z. B. `IPM1`), `manifest_path` (relativ zu `hass.config.config_dir`, z. B. `isyglt/anlage.yaml`) und optional `scan_interval` / `pulse_ms` ab.
+* Config Flow fragt Protokoll (Default `http://`), Host/IP, Port (Default `8080`), API-Pfad (Default `/ipms`), `master_alias`, `manifest_path` (Default `isyglt/`, relativ oder absolut innerhalb von `hass.config.config_dir`) und optional `scan_interval` / `pulse_ms` ab.
 
 * Validiert beim Einrichten die Erreichbarkeit von `/ipms/jsonpooldata` sowie die Lesbarkeit der Manifest-Datei.
 
-* Mehrere Config Entries (z. B. `IPM1`, `IPM2`) laufen parallel und kollisionsfrei über `unique_id` auf Basis von `ipms_url` + `master_alias`.
+* Mehrere Config Entries (z. B. `IPM1`, `IPM2`) können dieselbe IPMS-Server-Adresse verwenden und laufen über `unique_id` auf Basis der normalisierten `ipms_url` + `master_alias` kollisionsfrei. Jeder Eintrag pollt nur Marker seines Masters; Areas mit gleichem Namen werden gemeinsam genutzt.
+
+* Verbindungsdaten und Manifestpfad sind nachträglich über den Options Flow änderbar; Änderungen validieren Verbindung und Manifest und laden den Config Entry neu.
 
 * Unterstützt `async_reload_entry`, sodass nach einer Änderung durch Projekt A ein Klick auf **Neu laden** alle Plattformen sauber aktualisiert.
 

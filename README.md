@@ -21,12 +21,24 @@ Diese Home-Assistant-Integration (**Projekt C**) bindet ISYGLT-Gebäudeautomatio
 ### 3. Integration in Home Assistant hinzufügen
 1. Gehe zu **Einstellungen → Geräte & Dienste → Integration hinzufügen** und suche nach **ISYGLT IPMS**.
 2. Gib folgende Daten ein:
-   * **IPMS-URL:** z. B. `http://192.168.178.71:8080/ipms`
+   * **Protokoll:** `http://` (voreingestellt, editierbar)
+   * **IP-Adresse/Hostname:** z. B. `192.168.178.71`
+   * **Port:** z. B. `8080`
+   * **IPMS-API-Pfad:** `/ipms` (voreingestellt, editierbar)
    * **Master-Alias:** z. B. `IPM1`
-   * **Pfad zur Manifest-Datei:** z. B. `/config/isyglt/anlage.yaml`
+   * **Manifest-Pfad:** z. B. `isyglt/ipm1_eg.yaml` (das Verzeichnis `isyglt/` ist vorausgefüllt)
 3. Nach dem Speichern werden alle Bereiche (**Areas**) aus `locations` sowie sämtliche Entitäten automatisch angelegt.
 
 *(Hinweis: Bei mehreren IP-Mastern auf einem oder mehreren IPMS-Servern kannst du die Integration einfach mehrfach über **Integration hinzufügen** anlegen.)*
+
+Die Verbindungsfelder und der Manifest-Pfad lassen sich später über **Einstellungen → Geräte & Dienste → ISYGLT IPMS → Konfigurieren** ändern. Home Assistant prüft dabei Verbindung und Manifest und lädt die Integration nach dem Speichern neu.
+
+Jeder Config Entry verwaltet genau einen IP-Master. Die IP-Adresse gehört zum IPMS-Server (dem PC mit IPMS), nicht zum IP-Master. Mehrere Master auf demselben IPMS-Server verwenden daher dieselben Verbindungsdaten; allein der Alias und das dazu passende Manifest unterscheiden sie. Lege beispielsweise zwei Manifeste mit den passenden `master.alias`-Werten und Markern an (`IPM1:...` bzw. `IPM2:...`) und füge sie als getrennte Integrations-Einträge hinzu:
+
+* Protokoll `http://`, Host `192.168.178.71`, Port `8080`, Alias `IPM1`, Manifest `isyglt/ipm1_eg.yaml`
+* Protokoll `http://`, Host `192.168.178.71`, Port `8080`, Alias `IPM2`, Manifest `isyglt/ipm2_og.yaml`
+
+Die Config Entries haben getrennte Coordinators und werden anhand der Kombination aus Server-URL und Alias eindeutig erkannt; Areas mit gleichem Namen werden gemeinsam genutzt. Die `master.alias`-Angabe und alle Marker-Präfixe eines Manifests müssen zum jeweiligen Config Entry passen.
 
 ---
 
@@ -119,7 +131,6 @@ Diese Home-Assistant-Integration (**Projekt C**) bindet ISYGLT-Gebäudeautomatio
 schema_version: 1
 master:
   alias: "IPM1"
-  ipms_url: "http://192.168.178.71:8080/ipms"
   scan_interval: 1.0
   pulse_ms: 150
 

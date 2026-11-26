@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from itertools import count
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -23,12 +24,27 @@ class IsygltCommandError(IsygltApiError):
     """IPMS rejected or failed to process a command."""
 
 
+def normalize_ipms_url(url: str) -> str:
+    """Normalize a server URL to the IPMS API base path."""
+    parsed = urlsplit(url.strip())
+    if (
+        parsed.scheme.lower() not in ("http", "https")
+        or not parsed.netloc
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("IPMS URL must be an HTTP(S) URL without query or fragment")
+
+    path = parsed.path.rstrip("/") or "/ipms"
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc, path, "", ""))
+
+
 class IsygltApiClient:
     """Client for batch pool reads and URL-encoded ajax commands."""
 
     def __init__(self, hass: HomeAssistant, base_url: str) -> None:
         self._session = async_get_clientsession(hass)
-        self._base_url = base_url.rstrip("/")
+        self._base_url = normalize_ipms_url(base_url)
         self._command_ids = count(1)
 
     async def async_read_pool(

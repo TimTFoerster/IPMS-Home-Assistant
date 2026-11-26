@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -11,10 +10,10 @@ from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import area_registry
 
 from .api import IsygltApiClient
+from .config_flow import build_ipms_url, get_config_entry_settings
 from .const import (
     DEFAULT_PULSE_MS,
     DEFAULT_SCAN_INTERVAL,
-    CONF_IPMS_URL,
     CONF_MANIFEST_PATH,
     CONF_MASTER_ALIAS,
     CONF_PULSE_MS,
@@ -23,23 +22,29 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import IsygltDataUpdateCoordinator
-from .manifest_loader import async_load_manifest
+from .manifest_loader import (
+    async_load_manifest,
+    resolve_manifest_path,
+    validate_manifest_master,
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up an IPMS master from a manifest."""
-    manifest_path = Path(hass.config.config_dir) / entry.data[CONF_MANIFEST_PATH]
+    settings = get_config_entry_settings(entry)
+    manifest_path = resolve_manifest_path(
+        hass.config.config_dir, settings[CONF_MANIFEST_PATH]
+    )
     manifest = await async_load_manifest(hass, manifest_path)
 
     master = manifest["master"]
-    master["alias"] = entry.data[CONF_MASTER_ALIAS]
-    master["ipms_url"] = entry.data[CONF_IPMS_URL].rstrip("/")
-    master["scan_interval"] = entry.data.get(
-        CONF_SCAN_INTERVAL, master.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    master["alias"] = settings[CONF_MASTER_ALIAS]
+    validate_manifest_master(manifest, master["alias"])
+    master["ipms_url"] = build_ipms_url(settings)
+    master["scan_interval"] = settings.get(
+        CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
     )
-    master["pulse_ms"] = entry.data.get(
-        CONF_PULSE_MS, master.get(CONF_PULSE_MS, DEFAULT_PULSE_MS)
-    )
+    master["pulse_ms"] = settings.get(CONF_PULSE_MS, DEFAULT_PULSE_MS)
 
     api = IsygltApiClient(hass, master["ipms_url"])
     coordinator = IsygltDataUpdateCoordinator(

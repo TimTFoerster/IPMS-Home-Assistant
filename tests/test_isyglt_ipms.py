@@ -3,27 +3,60 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
+from urllib.parse import urlsplit
 
+import aiohttp
 import pytest
+import voluptuous as vol
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_RGB_COLOR,
     ATTR_RGBW_COLOR,
 )
+from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryError, HomeAssistantError
 
-from custom_components.isyglt_ipms.api import IsygltApiClient
-from custom_components.isyglt_ipms.api import IsygltCommandError
+import custom_components.isyglt_ipms as integration
+from custom_components.isyglt_ipms.api import (
+    IsygltApiClient,
+    IsygltCommandError,
+    IsygltConnectionError,
+    normalize_ipms_url,
+)
 from custom_components.isyglt_ipms.binary_sensor import (
     IsygltBinarySensor,
     IsygltMasterConnectivitySensor,
 )
-from custom_components.isyglt_ipms.const import DEFAULT_PULSE_MS
-from custom_components.isyglt_ipms.config_flow import _validate_input
+from custom_components.isyglt_ipms.const import DEFAULT_PULSE_MS, DOMAIN
+from custom_components.isyglt_ipms.const import (
+    CONF_IPMS_API_PATH,
+    CONF_IPMS_HOST,
+    CONF_IPMS_PORT,
+    CONF_IPMS_SCHEME,
+    CONF_MANIFEST_PATH,
+    CONF_MASTER_ALIAS,
+    DEFAULT_IPMS_API_PATH,
+    DEFAULT_IPMS_PORT,
+    DEFAULT_IPMS_SCHEME,
+    DEFAULT_MANIFEST_PATH,
+)
+from custom_components.isyglt_ipms.config_flow import (
+    IsygltConfigFlow,
+    IsygltOptionsFlow,
+    build_ipms_url,
+    _connection_error_key,
+    _config_entry_unique_id,
+    _form_schema,
+    get_config_entry_settings,
+    _manifest_error_key,
+    _validate_input,
+)
 from custom_components.isyglt_ipms.cover import IsygltCover
 from custom_components.isyglt_ipms.button import IsygltButton
 from custom_components.isyglt_ipms.climate import IsygltClimate
@@ -32,6 +65,8 @@ from custom_components.isyglt_ipms.light import IsygltLight
 from custom_components.isyglt_ipms.manifest_loader import (
     _load_manifest,
     _validate_manifest,
+    resolve_manifest_path,
+    validate_manifest_master,
 )
 from custom_components.isyglt_ipms.numeric import decode_numeric, encode_numeric
 from custom_components.isyglt_ipms.number import IsygltNumber
@@ -180,7 +215,7 @@ def test_ajax_command_uses_required_query_and_form_body(
             lambda hass: session,
         )
         client = IsygltApiClient(
-            object.__new__(HomeAssistant), "http://host/ipms"
+            object.__new__(HomeAssistant), "http://host"
         )
         await client.async_read_pool([("IPM1:NA64.1", "BIT")])
         await client.async_send_command("WRITE_BYTE", "IPM1:M56", 180)
@@ -204,14 +239,279 @@ def test_ajax_command_uses_required_query_and_form_body(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://192.168.178.71:8080", "http://192.168.178.71:8080/ipms"),
+        ("http://192.168.178.71:8080/", "http://192.168.178.71:8080/ipms"),
+        ("http://192.168.178.71:8080/ipms/", "http://192.168.178.71:8080/ipms"),
+        ("https://ipms.example/proxy/ipms", "https://ipms.example/proxy/ipms"),
+    ],
+)
+def test_ipms_url_normalization(url: str, expected: str) -> None:
+    assert normalize_ipms_url(url) == expected
+
+
+def test_manifest_paths_support_absolute_config_paths_and_reject_escape() -> None:
+    assert resolve_manifest_path(
+        "/config", "/config/isyglt/ipm1_eg.yaml"
+    ) == Path("/config/isyglt/ipm1_eg.yaml")
+    assert resolve_manifest_path(
+        "/config", "isyglt/ipm2_og.yaml"
+    ) == Path("/config/isyglt/ipm2_og.yaml")
+    with pytest.raises(
+        ConfigEntryError, match="inside the Home Assistant config directory"
+    ):
+        resolve_manifest_path("/config", "/tmp/ipm.yaml")
+
+
+def test_manifest_master_validation_prevents_cross_master_markers() -> None:
+    manifest = {
+        "master": {"alias": "IPM1"},
+        "entities": [
+            {"id": "light", "state_marker": "IPM1:NA1.1"},
+        ],
+    }
+    validate_manifest_master(manifest, "IPM1")
+    with pytest.raises(ConfigEntryError, match="must belong to master"):
+        validate_manifest_master(
+            {
+                "master": {"alias": "IPM1"},
+                "entities": [
+                    {"id": "light", "state_marker": "IPM2:NA1.1"},
+                ],
+            },
+            "IPM1",
+        )
+
+
+def test_config_entry_unique_ids_allow_multiple_masters_on_one_server() -> None:
+    first = _config_entry_unique_id("http://192.168.178.71:8080", "IPM1")
+    assert first == "http://192.168.178.71:8080/ipms#IPM1"
+    assert _config_entry_unique_id(
+        "http://192.168.178.71:8080", "IPM2"
+    ) != first
+    assert _config_entry_unique_id(
+        "http://192.168.178.71:8080", "IPM2"
+    ) != first
+    assert _config_entry_unique_id(
+        "http://192.168.178.71:8080/", "IPM1"
+    ) == first
+
+
+def test_options_override_connection_fields_and_legacy_entries_are_supported() -> None:
+    legacy_entry = SimpleNamespace(
+        data={
+            "ipms_url": "https://192.168.178.71:8443/custom/ipms",
+            CONF_MASTER_ALIAS: "IPM1",
+            CONF_MANIFEST_PATH: "isyglt/ipm1.yaml",
+        },
+        options={},
+    )
+    legacy_settings = get_config_entry_settings(legacy_entry)
+    assert build_ipms_url(legacy_settings) == (
+        "https://192.168.178.71:8443/custom/ipms"
+    )
+
+    updated_entry = SimpleNamespace(
+        data=legacy_entry.data,
+        options={
+            CONF_IPMS_SCHEME: "http://",
+            CONF_IPMS_HOST: "192.168.178.72",
+            CONF_IPMS_PORT: 8080,
+            CONF_IPMS_API_PATH: "/ipms",
+        },
+    )
+    assert build_ipms_url(get_config_entry_settings(updated_entry)) == (
+        "http://192.168.178.72:8080/ipms"
+    )
+    assert callable(
+        IsygltConfigFlow.async_get_options_flow(
+            cast(Any, SimpleNamespace())
+        ).async_step_init
+    )
+
+
+@pytest.mark.parametrize(
+    ("scheme", "host", "port", "api_path", "expected"),
+    [
+        ("http://", "192.168.178.71", 8080, "/ipms", "http://192.168.178.71:8080/ipms"),
+        ("https://", "ipms.example", 8443, "/custom/api", "https://ipms.example:8443/custom/api"),
+        ("http://", "2001:db8::1", 8080, "/ipms", "http://[2001:db8::1]:8080/ipms"),
+    ],
+)
+def test_build_ipms_url_from_separate_fields(
+    scheme: str, host: str, port: int, api_path: str, expected: str
+) -> None:
+    assert build_ipms_url(
+        {
+            CONF_IPMS_SCHEME: scheme,
+            CONF_IPMS_HOST: host,
+            CONF_IPMS_PORT: port,
+            CONF_IPMS_API_PATH: api_path,
+        }
+    ) == expected
+
+
+def test_config_form_prefills_protocol_port_api_path_and_manifest_directory() -> None:
+    schema = _form_schema({})
+    defaults = {
+        marker.schema: marker.default()
+        for marker in schema.schema
+        if isinstance(marker, vol.Required)
+    }
+    assert defaults[CONF_IPMS_SCHEME] == DEFAULT_IPMS_SCHEME
+    assert defaults[CONF_IPMS_PORT] == DEFAULT_IPMS_PORT
+    assert defaults[CONF_IPMS_API_PATH] == DEFAULT_IPMS_API_PATH
+    assert defaults[CONF_MANIFEST_PATH] == DEFAULT_MANIFEST_PATH
+
+
+def test_connection_and_manifest_errors_are_specific() -> None:
+    refused = ConnectionRefusedError(errno.ECONNREFUSED, "connection refused")
+    connection_key = aiohttp.client_reqrep.ConnectionKey(
+        "host", 8080, False, None, None, None, None
+    )
+    connector_error = aiohttp.ClientConnectorError(connection_key, refused)
+    api_error = IsygltConnectionError("failed")
+    api_error.__cause__ = connector_error
+    assert _connection_error_key(api_error) == "connection_refused"
+
+    timeout_error = IsygltConnectionError("failed")
+    timeout_error.__cause__ = TimeoutError()
+    assert _connection_error_key(timeout_error) == "connection_timeout"
+
+    missing_manifest = ConfigEntryError("missing")
+    missing_manifest.__cause__ = FileNotFoundError("missing")
+    assert _manifest_error_key(missing_manifest) == "manifest_not_found"
+    assert _manifest_error_key(ConfigEntryError("invalid yaml")) == "invalid_manifest"
+    assert issubclass(IsygltOptionsFlow, config_entries.OptionsFlowWithReload)
+
+
+def test_two_config_entries_keep_coordinators_independent_and_share_areas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifests = {
+        "ipm1.yaml": {
+            "master": {"alias": "IPM1"},
+            "locations": [{"id": "eg_wz", "name": "Wohnzimmer"}],
+            "entities": [],
+        },
+        "ipm2.yaml": {
+            "master": {"alias": "IPM2"},
+            "locations": [{"id": "og_wz", "name": "Wohnzimmer"}],
+            "entities": [],
+        },
+    }
+
+    async def load_manifest(hass: Any, path: Path) -> dict[str, Any]:
+        return manifests[path.name]
+
+    class FakeApi:
+        def __init__(self, hass: Any, base_url: str) -> None:
+            self.base_url = base_url
+
+    coordinators: list[Any] = []
+
+    class FakeCoordinator:
+        def __init__(
+            self,
+            hass: Any,
+            api: FakeApi,
+            manifest: dict[str, Any],
+            master: dict[str, Any],
+            *,
+            config_entry: Any,
+        ) -> None:
+            self.api = api
+            self.manifest = manifest
+            self.master = master
+            self.config_entry = config_entry
+            coordinators.append(self)
+
+        async def async_config_entry_first_refresh(self) -> None:
+            return None
+
+    class FakeAreaRegistry:
+        def __init__(self) -> None:
+            self.areas: dict[str, Any] = {}
+
+        def async_get_area_by_name(self, name: str) -> Any:
+            return self.areas.get(name)
+
+        def async_create(self, name: str) -> Any:
+            area = SimpleNamespace(id=f"area_{len(self.areas) + 1}")
+            self.areas[name] = area
+            return area
+
+    area_registry = FakeAreaRegistry()
+
+    class FakeConfigEntries:
+        async def async_forward_entry_setups(
+            self, entry: Any, platforms: Any
+        ) -> None:
+            return None
+
+        async def async_unload_platforms(self, entry: Any, platforms: Any) -> bool:
+            return True
+
+    monkeypatch.setattr(integration, "async_load_manifest", load_manifest)
+    monkeypatch.setattr(integration, "IsygltApiClient", FakeApi)
+    monkeypatch.setattr(integration, "IsygltDataUpdateCoordinator", FakeCoordinator)
+    monkeypatch.setattr(integration.area_registry, "async_get", lambda hass: area_registry)
+
+    async def run() -> None:
+        hass = SimpleNamespace(
+            config=SimpleNamespace(config_dir="/config"),
+            config_entries=FakeConfigEntries(),
+            data={},
+        )
+        entries = [
+            SimpleNamespace(
+                entry_id=master_alias,
+                data={
+                    CONF_MANIFEST_PATH: f"/config/{manifest_name}",
+                    CONF_IPMS_SCHEME: "http://",
+                    CONF_IPMS_HOST: urlsplit(server_url).hostname,
+                    CONF_IPMS_PORT: urlsplit(server_url).port,
+                    CONF_IPMS_API_PATH: "/ipms",
+                    CONF_MASTER_ALIAS: master_alias,
+                },
+                options={},
+            )
+            for master_alias, manifest_name, server_url in (
+                ("IPM1", "ipm1.yaml", "http://192.168.178.71:8080"),
+                ("IPM2", "ipm2.yaml", "http://192.168.178.71:8080"),
+            )
+        ]
+        await integration.async_setup_entry(hass, entries[0])
+        await integration.async_setup_entry(hass, entries[1])
+
+        first = hass.data[DOMAIN][entries[0].entry_id]
+        second = hass.data[DOMAIN][entries[1].entry_id]
+        assert first["coordinator"] is not second["coordinator"]
+        assert first["api"] is not second["api"]
+        assert first["api"].base_url == "http://192.168.178.71:8080/ipms"
+        assert second["api"].base_url == "http://192.168.178.71:8080/ipms"
+        assert first["areas"]["eg_wz"] == second["areas"]["og_wz"]
+
+        await integration.async_unload_entry(hass, entries[0])
+        assert entries[0].entry_id not in hass.data[DOMAIN]
+        assert entries[1].entry_id in hass.data[DOMAIN]
+
+    asyncio.run(run())
+    assert len(coordinators) == 2
+
+
 def test_config_flow_connection_check_reads_dummy_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     received_markers: list[tuple[str, str]] = []
 
+    api_urls: list[str] = []
+
     class FakeApi:
         def __init__(self, hass: Any, base_url: str) -> None:
-            pass
+            api_urls.append(base_url)
 
         async def async_read_pool(
             self, markers: list[tuple[str, str]]
@@ -219,8 +519,11 @@ def test_config_flow_connection_check_reads_dummy_marker(
             received_markers.extend(markers)
             return {}
 
+    loaded_paths: list[Path] = []
+
     async def load_manifest(hass: Any, path: Path) -> dict[str, Any]:
-        return {}
+        loaded_paths.append(path)
+        return {"master": {"alias": "IPM2"}, "entities": []}
 
     monkeypatch.setattr(
         "custom_components.isyglt_ipms.config_flow.async_load_manifest",
@@ -235,14 +538,19 @@ def test_config_flow_connection_check_reads_dummy_marker(
         await _validate_input(
             cast(HomeAssistant, hass),
             {
-                "manifest_path": "anlage.yaml",
-                "ipms_url": "http://host/ipms",
-                "master_alias": "IPM2",
+                CONF_MANIFEST_PATH: "/config/isyglt/ipm2_og.yaml",
+                CONF_IPMS_SCHEME: "http://",
+                CONF_IPMS_HOST: "host",
+                CONF_IPMS_PORT: 8080,
+                CONF_IPMS_API_PATH: "/ipms",
+                CONF_MASTER_ALIAS: "IPM2",
             },
         )
 
     asyncio.run(run())
     assert received_markers == [("IPM2:M0", "BYTE")]
+    assert loaded_paths == [Path("/config/isyglt/ipm2_og.yaml")]
+    assert api_urls == ["http://host:8080/ipms"]
 
 
 @pytest.mark.parametrize(

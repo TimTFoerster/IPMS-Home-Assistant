@@ -48,6 +48,51 @@ async def async_load_manifest(
     return manifest
 
 
+def resolve_manifest_path(config_dir: str, manifest_path: str) -> Path:
+    """Resolve relative or absolute manifest paths inside the HA config directory."""
+    if not manifest_path:
+        raise ConfigEntryError("Manifest path must not be empty")
+
+    config_root = Path(config_dir).resolve()
+    requested_path = Path(manifest_path)
+    if ".." in requested_path.parts:
+        raise ConfigEntryError("Manifest path must not contain parent directories")
+
+    resolved_path = (
+        requested_path if requested_path.is_absolute() else config_root / requested_path
+    ).resolve()
+    try:
+        resolved_path.relative_to(config_root)
+    except ValueError as err:
+        raise ConfigEntryError(
+            "Manifest path must be inside the Home Assistant config directory"
+        ) from err
+    return resolved_path
+
+
+def validate_manifest_master(
+    manifest: dict[str, Any], master_alias: str
+) -> None:
+    """Ensure every entity marker belongs to the configured IPMS master."""
+    manifest_alias = manifest["master"].get("alias")
+    if manifest_alias != master_alias:
+        raise ConfigEntryError(
+            f"Manifest master alias {manifest_alias!r} does not match "
+            f"configured alias {master_alias!r}"
+        )
+
+    marker_prefix = f"{master_alias}:"
+    for entity in manifest["entities"]:
+        for field, marker in entity.items():
+            if field.endswith("_marker") and marker and not marker.startswith(
+                marker_prefix
+            ):
+                raise ConfigEntryError(
+                    f"Entity {entity['id']!r} marker {field!r} must belong to "
+                    f"master {master_alias!r}"
+                )
+
+
 def _load_manifest(path: Path) -> Any:
     """Read a manifest from disk."""
     content = path.read_text(encoding="utf-8")
