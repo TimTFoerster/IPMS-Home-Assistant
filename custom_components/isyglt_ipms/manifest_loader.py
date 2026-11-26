@@ -140,6 +140,26 @@ def _validate_manifest(manifest: Any) -> None:
             raise ConfigEntryError(
                 f"Location {location['id']!r} must define name or room"
             )
+        for field in ("name", "room", "building", "floor", "icon", "floor_icon"):
+            value = location.get(field)
+            if value is not None and not isinstance(value, str):
+                raise ConfigEntryError(
+                    f"Location {location['id']!r} field {field!r} must be a string"
+                )
+        floor_level = location.get("floor_level")
+        if floor_level is not None and (
+            isinstance(floor_level, bool) or not isinstance(floor_level, int)
+        ):
+            raise ConfigEntryError(
+                f"Location {location['id']!r} field 'floor_level' must be an integer"
+            )
+        if (
+            location.get("floor_icon") or location.get("floor_level") is not None
+        ) and not location.get("floor"):
+            raise ConfigEntryError(
+                f"Location {location['id']!r} requires a floor when setting floor_icon "
+                "or floor_level"
+            )
 
     entity_ids: set[str] = set()
     for index, entity in enumerate(manifest["entities"]):

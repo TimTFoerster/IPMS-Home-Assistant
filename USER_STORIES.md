@@ -80,7 +80,9 @@ Diese User Stories definieren die schrittweise Umsetzung der Home Assistant Cust
 
 **Akzeptanzkriterien:**
 
-* Beim Setup werden alle Einträge aus `locations` über `area_registry` geprüft und falls nicht vorhanden angelegt; Entitäten werden über `device_registry` / `entity_registry` ihrem `location_id`-Bereich zugeordnet.
+* Beim Setup wird `room` als Area-Name bevorzugt (`EG Wohnzimmer` wird `Wohnzimmer`); `floor` wird als Home-Assistant-Etage angelegt und zugewiesen. Bestehende Areas werden wiederverwendet und in die konfigurierte Etage integriert.
+* Raum-Icons werden anhand des Raumnamens automatisch als MDI-Icons gesetzt; unbekannte Namen erhalten ein allgemeines Haus-Icon. `icon` und `floor_icon` können die automatische Auswahl überschreiben. Übliche Etagen wie EG und OG erhalten passende Standard-Icons und Level.
+* Entitäten werden über `device_registry` / `entity_registry` ihrem `location_id`-Bereich zugeordnet.
 
 * Eine gemeinsame Basisklasse `IsygltEntity(CoordinatorEntity)` kapselt `unique_id`, `DeviceInfo` pro Raum/Master und die Auswertung von `enable_marker` und `fault_marker`.
 

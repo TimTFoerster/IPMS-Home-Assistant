@@ -23,6 +23,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, HomeAssistantError
 
 import custom_components.isyglt_ipms as integration
+from custom_components.isyglt_ipms import _default_area_icon, _default_floor_icon
 from custom_components.isyglt_ipms.api import (
     IsygltApiClient,
     IsygltCommandError,
@@ -299,6 +300,27 @@ def test_config_entry_unique_ids_allow_multiple_masters_on_one_server() -> None:
     ) == first
 
 
+@pytest.mark.parametrize(
+    ("room", "expected_icon"),
+    [
+        ("Wohnzimmer", "mdi:sofa"),
+        ("Bad", "mdi:shower"),
+        ("Gästetoilette", "mdi:toilet"),
+        ("Küche", "mdi:chef-hat"),
+        ("Arbeitszimmer", "mdi:desk"),
+        ("Unknown room", "mdi:home"),
+    ],
+)
+def test_room_icon_is_selected_automatically(room: str, expected_icon: str) -> None:
+    assert _default_area_icon(room) == expected_icon
+
+
+def test_floor_icons_are_selected_automatically() -> None:
+    assert _default_floor_icon("EG") == "mdi:home-floor-0"
+    assert _default_floor_icon("OG") == "mdi:home-floor-1"
+    assert _default_floor_icon("Keller") == "mdi:home-floor-negative-1"
+
+
 def test_options_override_connection_fields_and_legacy_entries_are_supported() -> None:
     legacy_entry = SimpleNamespace(
         data={
@@ -393,12 +415,28 @@ def test_two_config_entries_keep_coordinators_independent_and_share_areas(
     manifests = {
         "ipm1.yaml": {
             "master": {"alias": "IPM1"},
-            "locations": [{"id": "eg_wz", "name": "Wohnzimmer"}],
+            "locations": [
+                {
+                    "id": "eg_wz",
+                    "name": "EG Wohnzimmer",
+                    "room": "Wohnzimmer",
+                    "floor": "EG",
+                    "floor_level": 0,
+                }
+            ],
             "entities": [],
         },
         "ipm2.yaml": {
             "master": {"alias": "IPM2"},
-            "locations": [{"id": "og_wz", "name": "Wohnzimmer"}],
+            "locations": [
+                {
+                    "id": "og_wz",
+                    "name": "Wohnzimmer",
+                    "room": "Wohnzimmer",
+                    "floor": "EG",
+                    "floor_level": 0,
+                }
+            ],
             "entities": [],
         },
     }
@@ -433,17 +471,70 @@ def test_two_config_entries_keep_coordinators_independent_and_share_areas(
 
     class FakeAreaRegistry:
         def __init__(self) -> None:
-            self.areas: dict[str, Any] = {}
+            legacy_area = SimpleNamespace(
+                id="legacy_area",
+                name="EG Wohnzimmer",
+                icon=None,
+                floor_id=None,
+            )
+            self.areas: dict[str, Any] = {"EG Wohnzimmer": legacy_area}
 
         def async_get_area_by_name(self, name: str) -> Any:
             return self.areas.get(name)
 
-        def async_create(self, name: str) -> Any:
-            area = SimpleNamespace(id=f"area_{len(self.areas) + 1}")
+        def async_create(
+            self, name: str, *, icon: str | None = None, floor_id: str | None = None
+        ) -> Any:
+            area = SimpleNamespace(
+                id=f"area_{len(self.areas) + 1}",
+                name=name,
+                icon=icon,
+                floor_id=floor_id,
+            )
             self.areas[name] = area
             return area
 
+        def async_update(self, area_id: str, **updates: Any) -> Any:
+            old_name, area = next(
+                (name, area)
+                for name, area in self.areas.items()
+                if area.id == area_id
+            )
+            self.areas.pop(old_name)
+            for key, value in updates.items():
+                setattr(area, key, value)
+            self.areas[area.name] = area
+            return area
+
+    class FakeFloorRegistry:
+        def __init__(self) -> None:
+            self.floors: dict[str, Any] = {}
+
+        def async_get_floor_by_name(self, name: str) -> Any:
+            return self.floors.get(name)
+
+        def async_create(
+            self, name: str, *, icon: str | None = None, level: int | None = None
+        ) -> Any:
+            floor = SimpleNamespace(
+                floor_id=f"floor_{name}",
+                name=name,
+                icon=icon,
+                level=level,
+            )
+            self.floors[name] = floor
+            return floor
+
+        def async_update(self, floor_id: str, **updates: Any) -> Any:
+            floor = next(
+                floor for floor in self.floors.values() if floor.floor_id == floor_id
+            )
+            for key, value in updates.items():
+                setattr(floor, key, value)
+            return floor
+
     area_registry = FakeAreaRegistry()
+    floor_registry = FakeFloorRegistry()
 
     class FakeConfigEntries:
         async def async_forward_entry_setups(
@@ -458,6 +549,7 @@ def test_two_config_entries_keep_coordinators_independent_and_share_areas(
     monkeypatch.setattr(integration, "IsygltApiClient", FakeApi)
     monkeypatch.setattr(integration, "IsygltDataUpdateCoordinator", FakeCoordinator)
     monkeypatch.setattr(integration.area_registry, "async_get", lambda hass: area_registry)
+    monkeypatch.setattr(integration.floor_registry, "async_get", lambda hass: floor_registry)
 
     async def run() -> None:
         hass = SimpleNamespace(
@@ -493,6 +585,12 @@ def test_two_config_entries_keep_coordinators_independent_and_share_areas(
         assert first["api"].base_url == "http://192.168.178.71:8080/ipms"
         assert second["api"].base_url == "http://192.168.178.71:8080/ipms"
         assert first["areas"]["eg_wz"] == second["areas"]["og_wz"]
+        assert first["areas"]["eg_wz"] == "legacy_area"
+        assert "EG Wohnzimmer" not in area_registry.areas
+        assert area_registry.areas["Wohnzimmer"].floor_id == "floor_EG"
+        assert area_registry.areas["Wohnzimmer"].icon == "mdi:sofa"
+        assert floor_registry.floors["EG"].level == 0
+        assert floor_registry.floors["EG"].icon == "mdi:home-floor-0"
 
         await integration.async_unload_entry(hass, entries[0])
         assert entries[0].entry_id not in hass.data[DOMAIN]

@@ -40,6 +40,8 @@ Jeder Config Entry verwaltet genau einen IP-Master. Die IP-Adresse gehört zum I
 
 Die Config Entries haben getrennte Coordinators und werden anhand der Kombination aus Server-URL und Alias eindeutig erkannt; Areas mit gleichem Namen werden gemeinsam genutzt. Die `master.alias`-Angabe und alle Marker-Präfixe eines Manifests müssen zum jeweiligen Config Entry passen.
 
+Für Areas wird `room` als Name verwendet (z. B. `Wohnzimmer` statt `EG Wohnzimmer`). `floor` wird als Home-Assistant-Etage angelegt und dem Bereich zugewiesen. Raum-Icons werden anhand gängiger deutscher und englischer Raumnamen automatisch als Material Design Icons ausgewählt (z. B. Wohnzimmer → Sofa, Bad → Dusche, Küche → Kochmütze); unbekannte Räume erhalten ein allgemeines Haus-Icon. Etagen wie EG/OG erhalten automatisch passende Level und Icons. `floor_level`, `icon` und `floor_icon` können diese Automatik im Manifest überschreiben. Bestehende Bereiche werden wiederverwendet und der Etage zugeordnet; vorhandene, manuell gesetzte Icons bleiben erhalten. Ein zuvor automatisch angelegter Name aus `name` wird auf `room` umgestellt, sofern noch kein Bereich mit diesem Raumnamen existiert.
+
 ---
 
 ## Nutzung & Bedienung

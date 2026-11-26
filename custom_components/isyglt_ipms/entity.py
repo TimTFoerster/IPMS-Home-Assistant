@@ -40,7 +40,7 @@ class IsygltEntity(CoordinatorEntity[IsygltDataUpdateCoordinator]):
             ),
             None,
         )
-        location_name = (location or {}).get("name") or (location or {}).get("room")
+        location_name = (location or {}).get("room") or (location or {}).get("name")
         master_alias = coordinator.master.get("alias", "")
         self._device_identifier = (
             DOMAIN,
