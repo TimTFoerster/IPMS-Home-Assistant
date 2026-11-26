@@ -9,7 +9,7 @@ from homeassistant.components.climate.const import (
     HVACAction,
     HVACMode,
     PRESET_COMFORT,
-    PRESET_NONE,
+    PRESET_ECO,
     ClimateEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -51,7 +51,7 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
         self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
         if config.get("comfort_marker"):
             self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
-            self._attr_preset_modes = [PRESET_COMFORT, PRESET_NONE]
+            self._attr_preset_modes = [PRESET_ECO, PRESET_COMFORT]
 
     @property
     def current_temperature(self) -> float | None:
@@ -85,7 +85,7 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
         return (
             PRESET_COMFORT
             if self.coordinator.get_bit(marker)
-            else PRESET_NONE
+            else PRESET_ECO
         )
 
     @property

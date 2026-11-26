@@ -532,7 +532,8 @@ def test_climate_scales_temperature_and_writes_setpoint() -> None:
         assert climate.current_temperature == 20
         assert climate.target_temperature == 21
         assert climate.hvac_mode.value == "heat"
-        assert climate.preset_mode == "none"
+        assert climate.preset_modes == ["eco", "comfort"]
+        assert climate.preset_mode == "eco"
         assert climate.hvac_action.value == "heating"
         await climate.async_set_preset_mode("comfort")
         assert coordinator.commands[-1] == ("bit", "IPM1:NE1.1", True)
