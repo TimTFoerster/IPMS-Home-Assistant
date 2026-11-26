@@ -9,7 +9,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryError
+from homeassistant.exceptions import ConfigEntryError, HomeAssistantError
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
@@ -48,6 +48,12 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unchanged_cycles = 0
         self._cycle_key = self._master_cycle_key(master.get("alias", ""))
         self._refresh_lock = asyncio.Lock()
+        self._marker_command_locks: dict[str, asyncio.Lock] = {}
+        self._optimistic_states: dict[str, tuple[int, float]] = {}
+        self._optimistic_expiry_handles: dict[str, asyncio.TimerHandle] = {}
+        self._optimistic_hold_seconds = max(
+            float(master.get("scan_interval", DEFAULT_SCAN_INTERVAL)) * 2, 1.0
+        )
         super().__init__(
             hass,
             logger=logging.getLogger(__name__),
@@ -161,7 +167,7 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def get_bit(self, marker: str) -> bool | None:
         """Return a polled bit value, or None when missing/unparseable."""
-        value = self.data.get(marker) if self.data else None
+        value = self._get_marker_value(marker)
         if value is None:
             return None
         try:
@@ -176,7 +182,7 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def get_int(self, marker: str) -> int | None:
         """Return a polled integer value without imposing a byte range."""
-        value = self.data.get(marker) if self.data else None
+        value = self._get_marker_value(marker)
         if value is None:
             return None
         try:
@@ -184,25 +190,101 @@ class IsygltDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             return None
 
-    async def async_write_bit(self, marker: str, value: bool) -> None:
-        """Write a bit and immediately refresh all polled state."""
-        command = "SET_BIT_SWITCH" if value else "CLR_BIT_SWITCH"
-        await self.api.async_send_command(command, marker, 1)
+    def _get_marker_value(self, marker: str) -> Any:
+        """Return the active optimistic value before falling back to pool data."""
+        optimistic = self._optimistic_states.get(marker)
+        if optimistic is not None and asyncio.get_running_loop().time() < optimistic[1]:
+            return optimistic[0]
+        return self.data.get(marker) if self.data else None
+
+    def _set_optimistic_state(self, marker: str, value: int) -> None:
+        """Hold a successfully commanded value over stale pool responses."""
+        loop = asyncio.get_running_loop()
+        expires_at = loop.time() + self._optimistic_hold_seconds
+        self._optimistic_states[marker] = (value, expires_at)
+        old_handle = self._optimistic_expiry_handles.pop(marker, None)
+        if old_handle is not None:
+            old_handle.cancel()
+        self._optimistic_expiry_handles[marker] = loop.call_later(
+            self._optimistic_hold_seconds,
+            self._expire_optimistic_state,
+            marker,
+            expires_at,
+        )
+        self.async_update_listeners()
+
+    def _expire_optimistic_state(self, marker: str, expires_at: float) -> None:
+        """Drop a held value and publish the latest polled state."""
+        optimistic = self._optimistic_states.get(marker)
+        if optimistic is None or optimistic[1] != expires_at:
+            return
+        self._optimistic_states.pop(marker, None)
+        self._optimistic_expiry_handles.pop(marker, None)
+        self.async_update_listeners()
+
+    async def _async_write_marker(
+        self,
+        cmd: str,
+        marker: str,
+        value: int,
+        *,
+        optimistic_marker: str | None = None,
+        optimistic_value: int | None = None,
+    ) -> None:
+        """Serialize writes per marker and publish only successful commands."""
+        lock = self._marker_command_locks.setdefault(marker, asyncio.Lock())
+        async with lock:
+            try:
+                await self.api.async_send_command(cmd, marker, value)
+            except IsygltApiError as err:
+                raise HomeAssistantError(
+                    f"Unable to write IPMS marker {marker}: {err}"
+                ) from err
+            self._set_optimistic_state(
+                optimistic_marker or marker,
+                value if optimistic_value is None else optimistic_value,
+            )
         await self.async_request_refresh()
 
-    async def async_write_byte(self, marker: str, value: int) -> None:
-        """Write a byte and immediately refresh all polled state."""
+    async def async_write_bit(
+        self,
+        marker: str,
+        value: bool,
+        *,
+        optimistic_marker: str | None = None,
+    ) -> None:
+        """Write a bit, update its optimistic state, and refresh the pool."""
+        command = "SET_BIT_SWITCH" if value else "CLR_BIT_SWITCH"
+        await self._async_write_marker(
+            command,
+            marker,
+            1,
+            optimistic_marker=optimistic_marker,
+            optimistic_value=int(value),
+        )
+
+    async def async_write_byte(
+        self,
+        marker: str,
+        value: int,
+        *,
+        optimistic_marker: str | None = None,
+    ) -> None:
+        """Write a byte, update its optimistic state, and refresh the pool."""
         if not 0 <= value <= 255:
             raise ValueError("Byte value must be between 0 and 255")
-        await self.api.async_send_command("WRITE_BYTE", marker, value)
-        await self.async_request_refresh()
+        await self._async_write_marker(
+            "WRITE_BYTE",
+            marker,
+            value,
+            optimistic_marker=optimistic_marker,
+        )
 
     async def async_write_word(self, marker: str, value: int) -> None:
         """Write a word and immediately refresh all polled state."""
         if not 0 <= value <= 65535:
             raise ValueError("Word value must be between 0 and 65535")
-        await self.api.async_send_command("WRITE_WORD", marker, value)
-        await self.async_request_refresh()
+        await self._async_write_marker("WRITE_WORD", marker, value)
 
     async def async_pulse(self, marker: str, pulse_ms: int | None = None) -> None:
         """Pulse a bit and refresh state when the pulse has completed."""

@@ -100,7 +100,9 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
             return
         raw = round(float(temperature) / self._temperature_scale)
         await self.coordinator.async_write_byte(
-            self.entity_config["target_temp_marker"], raw
+            self.entity_config["target_temp_marker"],
+            raw,
+            optimistic_marker=self.entity_config["target_temp_marker"],
         )
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
@@ -108,5 +110,7 @@ class IsygltClimate(IsygltEntity, ClimateEntity):
         marker = self.entity_config.get("comfort_marker")
         if marker is not None:
             await self.coordinator.async_write_bit(
-                marker, preset_mode == PRESET_COMFORT
+                marker,
+                preset_mode == PRESET_COMFORT,
+                optimistic_marker=marker,
             )

@@ -124,13 +124,16 @@ class IsygltLight(IsygltEntity, LightEntity):
                     "command_marker", self.entity_config["state_marker"]
                 ),
                 True,
+                optimistic_marker=self.entity_config["state_marker"],
             )
         elif self._mode == "dimmer":
             brightness = kwargs.get(ATTR_BRIGHTNESS)
             if brightness is None or brightness <= 0:
                 brightness = self._last_brightness
             await self.coordinator.async_write_byte(
-                self.entity_config["brightness_marker"], int(brightness)
+                self.entity_config["brightness_marker"],
+                int(brightness),
+                optimistic_marker=self.entity_config["brightness_marker"],
             )
             self._last_brightness = int(brightness)
         elif self._mode == "dimmer_tw":
@@ -146,6 +149,7 @@ class IsygltLight(IsygltEntity, LightEntity):
                     "command_marker", self.entity_config["state_marker"]
                 ),
                 False,
+                optimistic_marker=self.entity_config["state_marker"],
             )
         elif self._mode in ("dimmer", "dimmer_tw") or self.entity_config.get(
             "brightness_marker"
@@ -154,19 +158,25 @@ class IsygltLight(IsygltEntity, LightEntity):
             if current is not None and current > 0:
                 self._last_brightness = current
             await self.coordinator.async_write_byte(
-                self.entity_config["brightness_marker"], 0
+                self.entity_config["brightness_marker"],
+                0,
+                optimistic_marker=self.entity_config["brightness_marker"],
             )
         else:
             for field in self._color_fields():
                 await self.coordinator.async_write_byte(
-                    self.entity_config[field], 0
+                    self.entity_config[field],
+                    0,
+                    optimistic_marker=self.entity_config[field],
                 )
 
     async def _turn_on_tunable_white(self, kwargs: dict[str, Any]) -> None:
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         if brightness is not None:
             await self.coordinator.async_write_byte(
-                self.entity_config["brightness_marker"], int(brightness)
+                self.entity_config["brightness_marker"],
+                int(brightness),
+                optimistic_marker=self.entity_config["brightness_marker"],
             )
         temperature = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
         if temperature is not None:
@@ -176,6 +186,7 @@ class IsygltLight(IsygltEntity, LightEntity):
             await self.coordinator.async_write_byte(
                 self.entity_config["color_temp_marker"],
                 max(0, min(255, normalized)),
+                optimistic_marker=self.entity_config["color_temp_marker"],
             )
 
     async def _turn_on_rgb(self, kwargs: dict[str, Any]) -> None:
@@ -192,13 +203,17 @@ class IsygltLight(IsygltEntity, LightEntity):
         if brightness_marker:
             if brightness is not None:
                 await self.coordinator.async_write_byte(
-                    brightness_marker, int(brightness)
+                    brightness_marker,
+                    int(brightness),
+                    optimistic_marker=brightness_marker,
                 )
         elif brightness is not None:
             color = tuple(round(component * int(brightness) / 255) for component in color)
         for field, component in zip(fields, color, strict=True):
             await self.coordinator.async_write_byte(
-                self.entity_config[field], component
+                self.entity_config[field],
+                component,
+                optimistic_marker=self.entity_config[field],
             )
 
     def _color_fields(self) -> tuple[str, ...]:

@@ -47,6 +47,7 @@ class IsygltSwitch(IsygltEntity, SwitchEntity):
         await self.coordinator.async_write_bit(
             self.entity_config.get("command_marker", self.entity_config["state_marker"]),
             True,
+            optimistic_marker=self.entity_config["state_marker"],
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -54,4 +55,5 @@ class IsygltSwitch(IsygltEntity, SwitchEntity):
         await self.coordinator.async_write_bit(
             self.entity_config.get("command_marker", self.entity_config["state_marker"]),
             False,
+            optimistic_marker=self.entity_config["state_marker"],
         )

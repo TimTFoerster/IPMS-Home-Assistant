@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
+    ATTR_COLOR_TEMP_KELVIN,
+    ATTR_RGB_COLOR,
+    ATTR_RGBW_COLOR,
+)
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.isyglt_ipms.api import IsygltApiClient
+from custom_components.isyglt_ipms.api import IsygltCommandError
 from custom_components.isyglt_ipms.binary_sensor import (
     IsygltBinarySensor,
     IsygltMasterConnectivitySensor,
@@ -19,6 +27,7 @@ from custom_components.isyglt_ipms.config_flow import _validate_input
 from custom_components.isyglt_ipms.cover import IsygltCover
 from custom_components.isyglt_ipms.button import IsygltButton
 from custom_components.isyglt_ipms.climate import IsygltClimate
+from custom_components.isyglt_ipms.coordinator import IsygltDataUpdateCoordinator
 from custom_components.isyglt_ipms.light import IsygltLight
 from custom_components.isyglt_ipms.manifest_loader import (
     _load_manifest,
@@ -87,6 +96,7 @@ class FakeCoordinator:
         self.last_update_success = True
         self.master_online = True
         self.commands: list[tuple[Any, ...]] = []
+        self.optimistic_writes: list[tuple[str, int]] = []
 
     def async_add_listener(self, _callback: Any, _context: Any = None) -> Any:
         return lambda: None
@@ -102,11 +112,29 @@ class FakeCoordinator:
     def get_int(self, marker: str) -> int | None:
         return self.get_byte(marker)
 
-    async def async_write_bit(self, marker: str, value: bool) -> None:
+    async def async_write_bit(
+        self,
+        marker: str,
+        value: bool,
+        *,
+        optimistic_marker: str | None = None,
+    ) -> None:
         self.commands.append(("bit", marker, value))
+        state_marker = optimistic_marker or marker
+        self.data[state_marker] = str(int(value))
+        self.optimistic_writes.append((state_marker, int(value)))
 
-    async def async_write_byte(self, marker: str, value: int) -> None:
+    async def async_write_byte(
+        self,
+        marker: str,
+        value: int,
+        *,
+        optimistic_marker: str | None = None,
+    ) -> None:
         self.commands.append(("byte", marker, value))
+        state_marker = optimistic_marker or marker
+        self.data[state_marker] = str(value)
+        self.optimistic_writes.append((state_marker, value))
 
     async def async_write_word(self, marker: str, value: int) -> None:
         self.commands.append(("word", marker, value))
@@ -121,6 +149,24 @@ def _entity(
     config: dict[str, Any],
 ) -> Any:
     return entity_class(coordinator, config, {})
+
+
+def _optimistic_coordinator(api: Any, *, hold_seconds: float = 1.0) -> Any:
+    """Create a coordinator instance with the state needed for write-path tests."""
+    coordinator = object.__new__(IsygltDataUpdateCoordinator)
+    coordinator.api = api
+    coordinator.data = {"IPM1:M1": "0", "IPM1:M2": "0"}
+    coordinator._marker_command_locks = {}
+    coordinator._optimistic_states = {}
+    coordinator._optimistic_expiry_handles = {}
+    coordinator._optimistic_hold_seconds = hold_seconds
+    coordinator.async_update_listeners = lambda: None
+
+    async def request_refresh() -> None:
+        return None
+
+    coordinator.async_request_refresh = request_refresh
+    return coordinator
 
 
 def test_ajax_command_uses_required_query_and_form_body(
@@ -186,7 +232,7 @@ def test_config_flow_connection_check_reads_dummy_marker(
     async def run() -> None:
         hass = type("Hass", (), {"config": type("Config", (), {"config_dir": "/config"})()})()
         await _validate_input(
-            hass,
+            cast(HomeAssistant, hass),
             {
                 "manifest_path": "anlage.yaml",
                 "ipms_url": "http://host/ipms",
@@ -325,8 +371,89 @@ def test_dimmer_remembers_brightness_when_turned_off() -> None:
         assert light.brightness == 112
         await light.async_turn_off()
         assert coordinator.commands[-1] == ("byte", "IPM1:M56", 0)
+        assert light.is_on is False
         await light.async_turn_on()
         assert coordinator.commands[-1] == ("byte", "IPM1:M56", 112)
+        assert light.is_on is True
+        assert coordinator.optimistic_writes[-1] == ("IPM1:M56", 112)
+
+    asyncio.run(run())
+
+
+def test_tunable_white_uses_optimistic_brightness_and_color_temperature() -> None:
+    async def run() -> None:
+        coordinator = FakeCoordinator(
+            {"IPM1:M32": "0", "IPM1:M33": "0"}
+        )
+        light = _entity(
+            IsygltLight,
+            coordinator,
+            {
+                "id": "tw",
+                "name": "Tunable white",
+                "mode": "dimmer_tw",
+                "brightness_marker": "IPM1:M32",
+                "color_temp_marker": "IPM1:M33",
+                "min_kelvin": 2700,
+                "max_kelvin": 6500,
+            },
+        )
+
+        await light.async_turn_on(
+            **{ATTR_BRIGHTNESS: 80, ATTR_COLOR_TEMP_KELVIN: 4600}
+        )
+
+        assert light.brightness == 80
+        assert light.color_temp_kelvin == 4607
+        assert coordinator.optimistic_writes == [
+            ("IPM1:M32", 80),
+            ("IPM1:M33", 128),
+        ]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("mode", "color_key", "color", "fields"),
+    [
+        (
+            "rgb",
+            ATTR_RGB_COLOR,
+            (12, 34, 56),
+            ("red_marker", "green_marker", "blue_marker"),
+        ),
+        (
+            "rgbw",
+            ATTR_RGBW_COLOR,
+            (12, 34, 56, 78),
+            ("red_marker", "green_marker", "blue_marker", "white_marker"),
+        ),
+    ],
+)
+def test_rgb_and_rgbw_use_optimistic_color_marker_values(
+    mode: str,
+    color_key: str,
+    color: tuple[int, ...],
+    fields: tuple[str, ...],
+) -> None:
+    async def run() -> None:
+        config: dict[str, Any] = {
+            "id": mode,
+            "name": mode.upper(),
+            "mode": mode,
+        }
+        config.update(
+            {field: f"IPM1:M{index}" for index, field in enumerate(fields, 40)}
+        )
+        data = {config[field]: "0" for field in fields}
+        coordinator = FakeCoordinator(data)
+        light = _entity(IsygltLight, coordinator, config)
+
+        await light.async_turn_on(**{color_key: color})
+
+        expected = list(zip((config[field] for field in fields), color, strict=True))
+        assert coordinator.optimistic_writes == expected
+        assert light.rgb_color == color if mode == "rgb" else light.rgbw_color == color
 
     asyncio.run(run())
 
@@ -449,6 +576,99 @@ def test_cover_tilt_sends_two_impulses() -> None:
     asyncio.run(run())
 
 
+def test_optimistic_state_is_visible_before_refresh_completes() -> None:
+    async def run() -> None:
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+
+        class Api:
+            async def async_send_command(
+                self, cmd: str, marker: str, value: int
+            ) -> None:
+                return None
+
+        coordinator = _optimistic_coordinator(Api())
+
+        async def request_refresh() -> None:
+            refresh_started.set()
+            await release_refresh.wait()
+
+        coordinator.async_request_refresh = request_refresh
+        write = asyncio.create_task(
+            coordinator.async_write_bit("IPM1:M1", True)
+        )
+        await refresh_started.wait()
+        assert coordinator.get_bit("IPM1:M1") is True
+        release_refresh.set()
+        await write
+
+    asyncio.run(run())
+
+
+def test_failed_send_does_not_set_optimistic_state() -> None:
+    async def run() -> None:
+        class Api:
+            async def async_send_command(
+                self, cmd: str, marker: str, value: int
+            ) -> None:
+                raise IsygltCommandError("connection refused")
+
+        coordinator = _optimistic_coordinator(Api())
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_write_bit("IPM1:M1", True)
+        assert coordinator.get_bit("IPM1:M1") is False
+        assert coordinator._optimistic_states == {}
+
+    asyncio.run(run())
+
+
+def test_concurrent_writes_to_same_marker_are_serialized_and_latest_wins() -> None:
+    async def run() -> None:
+        commands: list[bool] = []
+        in_flight = 0
+        max_in_flight = 0
+
+        class Api:
+            async def async_send_command(
+                self, cmd: str, marker: str, value: int
+            ) -> None:
+                nonlocal in_flight, max_in_flight
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+                commands.append(cmd == "SET_BIT_SWITCH")
+                await asyncio.sleep(0.01)
+                in_flight -= 1
+
+        coordinator = _optimistic_coordinator(Api())
+        await asyncio.gather(
+            coordinator.async_write_bit("IPM1:M1", True),
+            coordinator.async_write_bit("IPM1:M1", False),
+        )
+
+        assert commands == [True, False]
+        assert max_in_flight == 1
+        assert coordinator.get_bit("IPM1:M1") is False
+
+    asyncio.run(run())
+
+
+def test_optimistic_state_expires_after_hold_timer() -> None:
+    async def run() -> None:
+        class Api:
+            async def async_send_command(
+                self, cmd: str, marker: str, value: int
+            ) -> None:
+                return None
+
+        coordinator = _optimistic_coordinator(Api(), hold_seconds=0.01)
+        await coordinator.async_write_bit("IPM1:M1", True)
+        assert coordinator.get_bit("IPM1:M1") is True
+        await asyncio.sleep(0.02)
+        assert coordinator.get_bit("IPM1:M1") is False
+
+    asyncio.run(run())
+
+
 def test_sensor_combines_high_and_low_byte_with_scale() -> None:
     coordinator = FakeCoordinator({"IPM1:NE50": "1", "IPM1:NE51": "44"})
     sensor = _entity(
@@ -483,6 +703,7 @@ def test_switch_reads_state_and_writes_command_marker() -> None:
         assert switch.is_on is True
         await switch.async_turn_off()
         assert coordinator.commands[-1] == ("bit", "IPM1:NA1.1", False)
+        assert switch.is_on is False
 
     asyncio.run(run())
 
@@ -537,8 +758,11 @@ def test_climate_scales_temperature_and_writes_setpoint() -> None:
         assert climate.hvac_action.value == "heating"
         await climate.async_set_preset_mode("comfort")
         assert coordinator.commands[-1] == ("bit", "IPM1:NE1.1", True)
+        assert climate.preset_mode == "comfort"
         await climate.async_set_temperature(temperature=22.5)
         assert coordinator.commands[-1] == ("byte", "IPM1:M92", 45)
+        assert ("IPM1:NE1.1", 1) in coordinator.optimistic_writes
+        assert ("IPM1:M92", 45) in coordinator.optimistic_writes
 
     asyncio.run(run())
 
